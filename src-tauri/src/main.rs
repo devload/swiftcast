@@ -30,9 +30,24 @@ async fn main() {
         }
     };
 
+    let proxy = Arc::new(RwLock::new(None));
+
+    // 자동 시작 설정 확인 및 프록시 시작
+    let auto_start = db.get_auto_start().await.unwrap_or(true);
+    if auto_start {
+        let port = db.get_proxy_port().await.unwrap_or(32080);
+        let mut server = ProxyServer::new(db.clone());
+        if let Err(e) = server.start(port).await {
+            tracing::error!("Failed to auto-start proxy: {}", e);
+        } else {
+            tracing::info!("Proxy auto-started on port {}", port);
+            *proxy.write().await = Some(server);
+        }
+    }
+
     let app_state = AppState {
         db,
-        proxy: Arc::new(RwLock::new(None)),
+        proxy,
     };
 
     tauri::Builder::default()
@@ -46,10 +61,13 @@ async fn main() {
             commands::start_proxy,
             commands::stop_proxy,
             commands::get_proxy_status,
-            commands::backup_claude_settings,
-            commands::restore_claude_settings,
-            commands::list_backups,
-            commands::delete_backup,
+            commands::get_claude_token_from_keychain,
+            commands::auto_scan_accounts,
+            commands::get_usage_stats,
+            commands::get_app_config,
+            commands::set_proxy_port,
+            commands::set_auto_start,
+            commands::get_proxy_port,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

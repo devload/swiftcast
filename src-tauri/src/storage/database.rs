@@ -14,7 +14,8 @@ impl Database {
         std::fs::create_dir_all(&app_data_dir)?;
 
         let db_path = app_data_dir.join("data.db");
-        let db_url = format!("sqlite:{}", db_path.display());
+        // Use absolute path with sqlite: prefix
+        let db_url = format!("sqlite:{}", db_path.to_str().unwrap());
 
         // 연결 풀 생성
         let pool = SqlitePool::connect(&db_url).await?;
@@ -70,9 +71,27 @@ impl Database {
         sqlx::query(
             r#"
             INSERT OR IGNORE INTO config (key, value) VALUES
-                ('proxy_port', '8080'),
-                ('auto_start', 'false'),
+                ('proxy_port', '32080'),
+                ('auto_start', 'true'),
                 ('theme', 'system')
+            "#,
+        )
+        .execute(&pool)
+        .await?;
+
+        // 기존 8080 포트를 32080으로 마이그레이션
+        sqlx::query(
+            r#"
+            UPDATE config SET value = '32080' WHERE key = 'proxy_port' AND value = '8080'
+            "#,
+        )
+        .execute(&pool)
+        .await?;
+
+        // 기존 auto_start false를 true로 마이그레이션
+        sqlx::query(
+            r#"
+            UPDATE config SET value = 'true' WHERE key = 'auto_start' AND value = 'false'
             "#,
         )
         .execute(&pool)
@@ -198,5 +217,85 @@ impl Database {
         }
         self.save_api_keys(&keys)?;
         Ok(())
+    }
+
+    // 사용량 로깅
+    pub async fn log_usage(
+        &self,
+        account_id: &str,
+        model: &str,
+        input_tokens: i64,
+        output_tokens: i64,
+    ) -> Result<()> {
+        let timestamp = chrono::Utc::now().timestamp();
+
+        sqlx::query(
+            r#"
+            INSERT INTO usage_logs (timestamp, account_id, model, input_tokens, output_tokens, cost_usd, duration_ms, status_code)
+            VALUES (?, ?, ?, ?, ?, 0, 0, 200)
+            "#,
+        )
+        .bind(timestamp)
+        .bind(account_id)
+        .bind(model)
+        .bind(input_tokens)
+        .bind(output_tokens)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    // 사용량 통계 조회
+    pub async fn get_usage_stats(&self) -> Result<(i64, i64, i64)> {
+        let row = sqlx::query(
+            r#"
+            SELECT
+                COUNT(*) as request_count,
+                COALESCE(SUM(input_tokens), 0) as total_input_tokens,
+                COALESCE(SUM(output_tokens), 0) as total_output_tokens
+            FROM usage_logs
+            "#,
+        )
+        .fetch_one(&self.pool)
+        .await?;
+
+        let request_count: i64 = row.try_get("request_count")?;
+        let input_tokens: i64 = row.try_get("total_input_tokens")?;
+        let output_tokens: i64 = row.try_get("total_output_tokens")?;
+
+        Ok((request_count, input_tokens, output_tokens))
+    }
+
+    // 설정값 조회
+    pub async fn get_config(&self, key: &str) -> Result<Option<String>> {
+        let row = sqlx::query("SELECT value FROM config WHERE key = ?")
+            .bind(key)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        Ok(row.map(|r| r.try_get("value").unwrap_or_default()))
+    }
+
+    // 설정값 저장
+    pub async fn set_config(&self, key: &str, value: &str) -> Result<()> {
+        sqlx::query("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)")
+            .bind(key)
+            .bind(value)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    // 프록시 포트 조회
+    pub async fn get_proxy_port(&self) -> Result<u16> {
+        let port_str = self.get_config("proxy_port").await?.unwrap_or_else(|| "32080".to_string());
+        Ok(port_str.parse().unwrap_or(32080))
+    }
+
+    // 자동 시작 설정 조회
+    pub async fn get_auto_start(&self) -> Result<bool> {
+        let auto_start = self.get_config("auto_start").await?.unwrap_or_else(|| "true".to_string());
+        Ok(auto_start == "true")
     }
 }

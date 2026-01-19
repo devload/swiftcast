@@ -21,9 +21,18 @@ export default function AccountManager({ onAccountChange }: AccountManagerProps)
     base_url: '',
     api_key: ''
   });
+  const [scanMessages, setScanMessages] = useState<string[]>([]);
+  const [scanning, setScanning] = useState(false);
 
   useEffect(() => {
     loadAccounts();
+
+    // 자동 업데이트: 2초마다 계정 목록 확인
+    const interval = setInterval(() => {
+      loadAccounts();
+    }, 2000);
+
+    return () => clearInterval(interval);
   }, []);
 
   const loadAccounts = async () => {
@@ -83,17 +92,60 @@ export default function AccountManager({ onAccountChange }: AccountManagerProps)
     }
   };
 
+  const handleAutoScan = async () => {
+    setScanning(true);
+    setScanMessages([]);
+
+    try {
+      const result = await invoke<{
+        found_accounts: number;
+        imported_accounts: number;
+        messages: string[];
+      }>('auto_scan_accounts');
+
+      setScanMessages(result.messages);
+      await loadAccounts();
+      onAccountChange();
+
+      // 5초 후 메시지 숨김
+      setTimeout(() => setScanMessages([]), 5000);
+    } catch (error) {
+      console.error('Failed to auto scan:', error);
+      setScanMessages([`❌ 스캔 실패: ${error}`]);
+    } finally {
+      setScanning(false);
+    }
+  };
+
   return (
     <div className="bg-white rounded-lg shadow p-6">
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-semibold text-gray-900">계정 관리</h2>
-        <button
-          onClick={() => setShowAddForm(!showAddForm)}
-          className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-2 px-4 rounded-lg transition-colors"
-        >
-          {showAddForm ? '취소' : '+ 계정 추가'}
-        </button>
+        <div className="flex space-x-2">
+          <button
+            onClick={handleAutoScan}
+            disabled={scanning}
+            className="bg-purple-600 hover:bg-purple-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white text-sm font-medium py-2 px-4 rounded-lg transition-colors"
+          >
+            {scanning ? '🔍 스캔 중...' : '🔍 Auto Scan'}
+          </button>
+          <button
+            onClick={() => setShowAddForm(!showAddForm)}
+            className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-2 px-4 rounded-lg transition-colors"
+          >
+            {showAddForm ? '취소' : '+ 계정 추가'}
+          </button>
+        </div>
       </div>
+
+      {/* 스캔 메시지 */}
+      {scanMessages.length > 0 && (
+        <div className="mb-4 bg-gray-900 text-green-400 rounded-lg p-4 space-y-1">
+          {scanMessages.map((msg, idx) => (
+            <div key={idx} className="text-sm font-mono">{msg}</div>
+          ))}
+        </div>
+      )}
 
       {/* 계정 추가 폼 */}
       {showAddForm && (

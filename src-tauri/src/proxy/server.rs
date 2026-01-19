@@ -3,14 +3,13 @@ use anyhow::Result;
 use axum::{
     body::Body,
     extract::{Request, State},
-    http::{HeaderMap, Method, StatusCode},
+    http::{Method, StatusCode},
     response::Response,
     routing::any,
     Router,
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use tower_http::cors::CorsLayer;
 
 pub struct ProxyServer {
@@ -107,6 +106,9 @@ async fn proxy_handler(
     // 타겟 URL 생성
     let target_url = format!("{}{}", account.base_url, full_path);
 
+    // 원본 헤더 저장
+    let original_headers = req.headers().clone();
+
     // 요청 바디 읽기
     let body_bytes = axum::body::to_bytes(req.into_body(), usize::MAX)
         .await
@@ -127,38 +129,87 @@ async fn proxy_handler(
         &target_url,
     );
 
-    // 헤더 추가
-    request_builder = request_builder
-        .header("x-api-key", api_key)
-        .header("anthropic-version", "2023-06-01")
-        .header("content-type", "application/json")
-        .header("accept", "text/event-stream");
+    // Anthropic 공식 API인지 확인
+    let is_anthropic = account.base_url.contains("api.anthropic.com");
+
+    // 원본 요청에 인증 헤더가 있는지 확인
+    let has_auth = original_headers.contains_key("x-api-key")
+        || original_headers.contains_key("authorization");
+
+    // 원본 헤더 전달 (일부 제외)
+    for (key, value) in original_headers.iter() {
+        let key_str = key.as_str().to_lowercase();
+        match key_str.as_str() {
+            "host" | "content-length" | "connection" | "transfer-encoding" | "accept-encoding" => {
+                // 제외
+            }
+            "x-api-key" | "authorization" => {
+                // Anthropic API일 때만 원본 인증 헤더 전달
+                if is_anthropic {
+                    if let Ok(v) = value.to_str() {
+                        request_builder = request_builder.header(key.as_str(), v);
+                    }
+                }
+            }
+            _ => {
+                if let Ok(v) = value.to_str() {
+                    request_builder = request_builder.header(key.as_str(), v);
+                }
+            }
+        }
+    }
+
+    // Anthropic이 아닌 경우 (GLM 등) 저장된 API 키 사용
+    if !is_anthropic && !api_key.is_empty() {
+        request_builder = request_builder.header("x-api-key", &api_key);
+    }
 
     // 바디 추가
     if !body_bytes.is_empty() {
         request_builder = request_builder.body(body_bytes);
     }
 
+    // 요청 로깅
+    tracing::info!("=== PROXY REQUEST ===");
+    tracing::info!("Method: {:?}, Target: {}", method.as_str(), target_url);
+    tracing::info!("Is Anthropic: {}, Using stored key: {}", is_anthropic, !is_anthropic && !api_key.is_empty());
+
     // 요청 전송
     let response = request_builder
         .send()
         .await
-        .map_err(|_| StatusCode::BAD_GATEWAY)?;
+        .map_err(|e| {
+            tracing::error!("Proxy request failed: {}", e);
+            StatusCode::BAD_GATEWAY
+        })?;
 
-    // 응답 헤더 복사
+    tracing::info!("=== PROXY RESPONSE ===");
+    tracing::info!("Status: {}", response.status());
+
+    // 응답 상태 및 헤더
     let status = response.status();
-    let mut headers = HeaderMap::new();
-    headers.insert("content-type", "text/event-stream".parse().unwrap());
-    headers.insert("cache-control", "no-cache".parse().unwrap());
-    headers.insert("connection", "keep-alive".parse().unwrap());
+
+    // 응답 헤더 전달
+    let mut builder = Response::builder().status(status.as_u16());
+
+    for (key, value) in response.headers().iter() {
+        let key_str = key.as_str().to_lowercase();
+        match key_str.as_str() {
+            "transfer-encoding" | "connection" => {
+                // 제외
+            }
+            _ => {
+                if let Ok(v) = value.to_str() {
+                    builder = builder.header(key.as_str(), v);
+                }
+            }
+        }
+    }
 
     // 응답 바디 스트리밍
     let body_stream = response.bytes_stream();
     let body = Body::from_stream(body_stream);
 
     // 응답 반환
-    Ok(Response::builder()
-        .status(status.as_u16())
-        .body(body)
-        .unwrap())
+    Ok(builder.body(body).unwrap())
 }

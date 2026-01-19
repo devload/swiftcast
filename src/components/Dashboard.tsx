@@ -7,18 +7,33 @@ interface DashboardProps {
   onProxyToggle: () => void;
 }
 
-interface BackupInfo {
-  filename: string;
-  timestamp: number;
-  size: number;
+interface AppConfig {
+  proxy_port: number;
+  auto_start: boolean;
 }
 
 export default function Dashboard({ proxyRunning, activeAccount, onProxyToggle }: DashboardProps) {
-  const [backups, setBackups] = useState<BackupInfo[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [config, setConfig] = useState<AppConfig>({ proxy_port: 32080, auto_start: true });
+  const [editingPort, setEditingPort] = useState(false);
+  const [portInput, setPortInput] = useState('32080');
+
+  useEffect(() => {
+    loadConfig();
+  }, []);
+
+  const loadConfig = async () => {
+    try {
+      const appConfig = await invoke<AppConfig>('get_app_config');
+      setConfig(appConfig);
+      setPortInput(appConfig.proxy_port.toString());
+    } catch (error) {
+      console.error('Failed to load config:', error);
+    }
+  };
+
   const handleStartProxy = async () => {
     try {
-      await invoke('start_proxy', { port: 8080 });
+      await invoke('start_proxy', { port: config.proxy_port });
       onProxyToggle();
     } catch (error) {
       console.error('Failed to start proxy:', error);
@@ -36,78 +51,32 @@ export default function Dashboard({ proxyRunning, activeAccount, onProxyToggle }
     }
   };
 
-  const loadBackups = async () => {
-    try {
-      const result = await invoke<BackupInfo[]>('list_backups');
-      setBackups(result);
-    } catch (error) {
-      console.error('Failed to load backups:', error);
-    }
-  };
-
-  const handleBackup = async () => {
-    setLoading(true);
-    try {
-      await invoke('backup_claude_settings');
-      alert('Claude 설정이 백업되었습니다.');
-      await loadBackups();
-    } catch (error) {
-      console.error('Failed to backup settings:', error);
-      alert(`백업 실패: ${error}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleRestore = async (filename: string) => {
-    if (!confirm(`백업 파일을 복원하시겠습니까?\n${formatDate(getTimestampFromFilename(filename))}`)) {
-      return;
-    }
-
-    setLoading(true);
-    try {
-      await invoke('restore_claude_settings', { backupFilename: filename });
-      alert('Claude 설정이 복원되었습니다. Claude Code를 재시작하세요.');
-    } catch (error) {
-      console.error('Failed to restore settings:', error);
-      alert(`복원 실패: ${error}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleDeleteBackup = async (filename: string) => {
-    if (!confirm(`백업 파일을 삭제하시겠습니까?\n${formatDate(getTimestampFromFilename(filename))}`)) {
+  const handlePortChange = async () => {
+    const port = parseInt(portInput, 10);
+    if (isNaN(port) || port < 1024 || port > 65535) {
+      alert('포트는 1024-65535 범위여야 합니다');
       return;
     }
 
     try {
-      await invoke('delete_backup', { backupFilename: filename });
-      await loadBackups();
+      await invoke('set_proxy_port', { port });
+      setConfig({ ...config, proxy_port: port });
+      setEditingPort(false);
     } catch (error) {
-      console.error('Failed to delete backup:', error);
-      alert(`백업 삭제 실패: ${error}`);
+      console.error('Failed to set port:', error);
+      alert(`포트 변경 실패: ${error}`);
     }
   };
 
-  const getTimestampFromFilename = (filename: string): number => {
-    const match = filename.match(/settings_backup_(\d+)\.json/);
-    return match ? parseInt(match[1]) : 0;
+  const handleAutoStartToggle = async () => {
+    try {
+      const newValue = !config.auto_start;
+      await invoke('set_auto_start', { enabled: newValue });
+      setConfig({ ...config, auto_start: newValue });
+    } catch (error) {
+      console.error('Failed to toggle auto start:', error);
+    }
   };
-
-  const formatDate = (timestamp: number): string => {
-    return new Date(timestamp * 1000).toLocaleString('ko-KR');
-  };
-
-  const formatFileSize = (bytes: number): string => {
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-  };
-
-  useEffect(() => {
-    loadBackups();
-  }, []);
 
   return (
     <div className="bg-white rounded-lg shadow p-6">
@@ -147,18 +116,70 @@ export default function Dashboard({ proxyRunning, activeAccount, onProxyToggle }
           )}
         </div>
 
-        {/* 프록시 정보 */}
+        {/* 프록시 설정 */}
         <div className="bg-gray-50 rounded-lg p-4">
-          <div className="grid grid-cols-2 gap-4 text-sm">
+          <div className="grid grid-cols-3 gap-4 text-sm">
             <div>
-              <div className="text-gray-500">포트</div>
-              <div className="font-medium">8080</div>
+              <div className="text-gray-500 mb-1">포트</div>
+              {editingPort ? (
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="number"
+                    value={portInput}
+                    onChange={(e) => setPortInput(e.target.value)}
+                    className="w-20 px-2 py-1 border rounded text-sm"
+                    min="1024"
+                    max="65535"
+                  />
+                  <button
+                    onClick={handlePortChange}
+                    className="text-green-600 hover:text-green-700 text-xs"
+                  >
+                    저장
+                  </button>
+                  <button
+                    onClick={() => {
+                      setEditingPort(false);
+                      setPortInput(config.proxy_port.toString());
+                    }}
+                    className="text-gray-500 hover:text-gray-700 text-xs"
+                  >
+                    취소
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center space-x-2">
+                  <span className="font-medium">{config.proxy_port}</span>
+                  {!proxyRunning && (
+                    <button
+                      onClick={() => setEditingPort(true)}
+                      className="text-blue-600 hover:text-blue-700 text-xs"
+                    >
+                      변경
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
             <div>
-              <div className="text-gray-500">상태</div>
+              <div className="text-gray-500 mb-1">상태</div>
               <div className={`font-medium ${proxyRunning ? 'text-green-600' : 'text-gray-600'}`}>
                 {proxyRunning ? '실행 중' : '중지됨'}
               </div>
+            </div>
+            <div>
+              <div className="text-gray-500 mb-1">자동 시작</div>
+              <label className="flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={config.auto_start}
+                  onChange={handleAutoStartToggle}
+                  className="sr-only"
+                />
+                <div className={`w-10 h-5 rounded-full transition-colors ${config.auto_start ? 'bg-green-500' : 'bg-gray-300'}`}>
+                  <div className={`w-4 h-4 bg-white rounded-full shadow transform transition-transform mt-0.5 ${config.auto_start ? 'translate-x-5 ml-0.5' : 'translate-x-0.5'}`} />
+                </div>
+              </label>
             </div>
           </div>
         </div>
@@ -167,16 +188,16 @@ export default function Dashboard({ proxyRunning, activeAccount, onProxyToggle }
         {proxyRunning && (
           <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
             <div className="text-sm text-yellow-800">
-              <div className="font-medium mb-1">Claude Code 설정</div>
+              <div className="font-medium mb-1">Claude Code 설정 (자동 적용됨)</div>
               <div className="text-xs">
                 <code className="bg-yellow-100 px-2 py-1 rounded">
-                  %APPDATA%\Claude\settings.json
+                  ~/.claude/settings.json
                 </code>
                 <div className="mt-2">
                   <pre className="bg-yellow-100 px-2 py-1 rounded overflow-x-auto">
 {`{
   "env": {
-    "ANTHROPIC_BASE_URL": "http://localhost:8080"
+    "ANTHROPIC_BASE_URL": "http://localhost:${config.proxy_port}"
   }
 }`}
                   </pre>
@@ -185,60 +206,6 @@ export default function Dashboard({ proxyRunning, activeAccount, onProxyToggle }
             </div>
           </div>
         )}
-
-        {/* Claude 설정 백업/복원 */}
-        <div className="border-t pt-4 mt-4">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-md font-semibold text-gray-900">Claude 설정 백업</h3>
-            <button
-              onClick={handleBackup}
-              disabled={loading}
-              className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white text-sm font-medium py-1.5 px-3 rounded transition-colors"
-            >
-              {loading ? '처리 중...' : '백업 생성'}
-            </button>
-          </div>
-
-          {backups.length > 0 ? (
-            <div className="space-y-2">
-              {backups.map((backup) => (
-                <div
-                  key={backup.filename}
-                  className="bg-gray-50 rounded-lg p-3 flex items-center justify-between"
-                >
-                  <div className="flex-1">
-                    <div className="text-sm font-medium text-gray-900">
-                      {formatDate(backup.timestamp)}
-                    </div>
-                    <div className="text-xs text-gray-500">
-                      {formatFileSize(backup.size)}
-                    </div>
-                  </div>
-                  <div className="flex space-x-2">
-                    <button
-                      onClick={() => handleRestore(backup.filename)}
-                      disabled={loading}
-                      className="bg-green-600 hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white text-xs font-medium py-1 px-2 rounded transition-colors"
-                    >
-                      복원
-                    </button>
-                    <button
-                      onClick={() => handleDeleteBackup(backup.filename)}
-                      disabled={loading}
-                      className="bg-red-600 hover:bg-red-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white text-xs font-medium py-1 px-2 rounded transition-colors"
-                    >
-                      삭제
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="bg-gray-50 rounded-lg p-4 text-center text-sm text-gray-500">
-              백업 파일이 없습니다
-            </div>
-          )}
-        </div>
       </div>
     </div>
   );

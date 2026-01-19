@@ -11,6 +11,14 @@ function App() {
   useEffect(() => {
     checkProxyStatus();
     loadActiveAccount();
+
+    // 자동 업데이트: 2초마다 상태 확인
+    const interval = setInterval(() => {
+      checkProxyStatus();
+      loadActiveAccount();
+    }, 2000);
+
+    return () => clearInterval(interval);
   }, []);
 
   const checkProxyStatus = async () => {
