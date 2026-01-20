@@ -1,0 +1,97 @@
+{
+  "app": {
+    "title": "SwiftCast",
+    "subtitle": "AI提供商切换 & 使用量监控",
+    "status": {
+      "running": "运行中",
+      "stopped": "已停止"
+    }
+  },
+  "nav": {
+    "dashboard": "仪表板",
+    "accounts": "账户",
+    "usage": "使用量",
+    "settings": "设置"
+  },
+  "dashboard": {
+    "title": "代理控制",
+    "activeAccount": "当前账户",
+    "noActiveAccount": "没有激活的账户",
+    "startProxy": "启动代理",
+    "stopProxy": "停止代理",
+    "port": "端口",
+    "status": "状态",
+    "autoStart": "自动启动",
+    "claudeSettings": "Claude Code 设置（自动应用）",
+    "running": "运行中",
+    "stopped": "已停止"
+  },
+  "accounts": {
+    "title": "账户管理",
+    "autoScan": "自动扫描",
+    "scanning": "扫描中...",
+    "addAccount": "添加账户",
+    "cancel": "取消",
+    "accountName": "账户名称",
+    "accountNamePlaceholder": "例如: My GLM Account",
+    "baseUrl": "Base URL",
+    "selectBaseUrl": "请选择",
+    "anthropic": "Anthropic (Claude)",
+    "glm": "GLM (Z.AI)",
+    "apiKey": "API密钥",
+    "apiKeyPlaceholder": "sk-ant-... 或 GLM API密钥",
+    "add": "添加",
+    "activate": "激活",
+    "delete": "删除",
+    "active": "已激活",
+    "noAccounts": "没有账户。请添加账户。",
+    "confirmDelete": "确定要删除此账户吗？",
+    "fillAllFields": "请填写所有字段"
+  },
+  "usage": {
+    "title": "使用量监控",
+    "tabs": {
+      "overview": "概览",
+      "models": "按模型",
+      "daily": "按日",
+      "sessions": "按会话",
+      "logs": "最近日志"
+    },
+    "requestCount": "请求数",
+    "requestCountTooltip": "发送到Claude API的请求总数",
+    "inputTokens": "输入令牌",
+    "inputTokensTooltip": "系统提示 + 对话历史 + 用户消息使用的令牌",
+    "outputTokens": "输出令牌",
+    "outputTokensTooltip": "Claude生成的响应使用的令牌",
+    "totalTokens": "总令牌",
+    "totalTokensTooltip": "输入令牌 + 输出令牌 = 总使用量（计算成本的依据）",
+    "requests": "次请求",
+    "input": "输入",
+    "output": "输出",
+    "total": "总计",
+    "tokens": "令牌",
+    "noData": "暂无数据",
+    "sessionId": "会话ID"
+  },
+  "settings": {
+    "title": "设置",
+    "proxyPort": "代理端口",
+    "proxyPortDesc": "Claude Code连接的本地代理端口",
+    "change": "更改",
+    "autoStart": "自动启动",
+    "autoStartDesc": "启动应用时自动启动代理",
+    "language": "语言",
+    "languageDesc": "选择应用显示语言",
+    "claudeSettingsFile": "Claude Code 设置文件",
+    "claudeSettingsDesc": "切换账户时自动更新",
+    "dataManagement": "数据管理",
+    "clearUsageLogs": "清除使用日志",
+    "confirmClearLogs": "确定要删除所有使用日志吗？"
+  },
+  "languages": {
+    "ko": "한국어",
+    "en": "English",
+    "ja": "日本語",
+    "zh": "中文"
+  }
+}

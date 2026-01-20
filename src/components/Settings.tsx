@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 
 interface AppConfig {
@@ -6,7 +7,15 @@ interface AppConfig {
   auto_start: boolean;
 }
 
+const LANGUAGES = [
+  { code: 'ko', name: '한국어' },
+  { code: 'en', name: 'English' },
+  { code: 'ja', name: '日本語' },
+  { code: 'zh', name: '中文' },
+];
+
 export default function Settings() {
+  const { t, i18n } = useTranslation();
   const [config, setConfig] = useState<AppConfig>({ proxy_port: 32080, auto_start: true });
   const [editingPort, setEditingPort] = useState(false);
   const [portInput, setPortInput] = useState('32080');
@@ -29,7 +38,7 @@ export default function Settings() {
   const handlePortSave = async () => {
     const port = parseInt(portInput, 10);
     if (isNaN(port) || port < 1024 || port > 65535) {
-      alert('포트는 1024-65535 범위여야 합니다');
+      alert(t('settings.portRangeError'));
       return;
     }
 
@@ -40,7 +49,7 @@ export default function Settings() {
       setEditingPort(false);
     } catch (error) {
       console.error('Failed to set port:', error);
-      alert(`포트 변경 실패: ${error}`);
+      alert(`${t('settings.portChangeFailed')}: ${error}`);
     } finally {
       setSaving(false);
     }
@@ -60,29 +69,59 @@ export default function Settings() {
   };
 
   const handleClearUsage = async () => {
-    if (!confirm('모든 사용량 로그를 삭제하시겠습니까?')) {
+    if (!confirm(t('settings.confirmClearUsage'))) {
       return;
     }
 
     try {
       await invoke('clear_usage_logs');
-      alert('사용량 로그가 삭제되었습니다');
+      alert(t('settings.usageCleared'));
     } catch (error) {
       console.error('Failed to clear usage:', error);
-      alert(`삭제 실패: ${error}`);
+      alert(`${t('settings.clearFailed')}: ${error}`);
     }
+  };
+
+  const handleLanguageChange = (langCode: string) => {
+    i18n.changeLanguage(langCode);
   };
 
   return (
     <div className="bg-white rounded-lg shadow p-6">
-      <h2 className="text-lg font-semibold text-gray-900 mb-4">설정</h2>
+      <h2 className="text-lg font-semibold text-gray-900 mb-4">{t('settings.title')}</h2>
 
       <div className="space-y-6">
+        {/* 언어 설정 */}
+        <div className="flex items-center justify-between py-3 border-b">
+          <div>
+            <div className="font-medium text-gray-900">{t('settings.language')}</div>
+            <div className="text-sm text-gray-500">{t('settings.languageDescription')}</div>
+          </div>
+          <select
+            value={i18n.language}
+            onChange={(e) => handleLanguageChange(e.target.value)}
+            className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white appearance-none cursor-pointer"
+            style={{
+              backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`,
+              backgroundPosition: 'right 0.5rem center',
+              backgroundRepeat: 'no-repeat',
+              backgroundSize: '1.5em 1.5em',
+              paddingRight: '2.5rem'
+            }}
+          >
+            {LANGUAGES.map((lang) => (
+              <option key={lang.code} value={lang.code}>
+                {lang.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
         {/* 프록시 포트 설정 */}
         <div className="flex items-center justify-between py-3 border-b">
           <div>
-            <div className="font-medium text-gray-900">프록시 포트</div>
-            <div className="text-sm text-gray-500">Claude Code가 연결할 로컬 프록시 포트</div>
+            <div className="font-medium text-gray-900">{t('settings.proxyPort')}</div>
+            <div className="text-sm text-gray-500">{t('settings.proxyPortDescription')}</div>
           </div>
           {editingPort ? (
             <div className="flex items-center space-x-2">
@@ -100,7 +139,7 @@ export default function Settings() {
                 disabled={saving}
                 className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:bg-gray-400"
               >
-                저장
+                {t('settings.save')}
               </button>
               <button
                 onClick={() => {
@@ -109,7 +148,7 @@ export default function Settings() {
                 }}
                 className="px-3 py-1 bg-gray-200 text-gray-700 rounded text-sm hover:bg-gray-300"
               >
-                취소
+                {t('settings.cancel')}
               </button>
             </div>
           ) : (
@@ -119,7 +158,7 @@ export default function Settings() {
                 onClick={() => setEditingPort(true)}
                 className="px-3 py-1 bg-gray-100 text-gray-700 rounded text-sm hover:bg-gray-200"
               >
-                변경
+                {t('settings.change')}
               </button>
             </div>
           )}
@@ -128,8 +167,8 @@ export default function Settings() {
         {/* 자동 시작 설정 */}
         <div className="flex items-center justify-between py-3 border-b">
           <div>
-            <div className="font-medium text-gray-900">자동 시작</div>
-            <div className="text-sm text-gray-500">앱 실행 시 프록시 자동 시작</div>
+            <div className="font-medium text-gray-900">{t('settings.autoStart')}</div>
+            <div className="text-sm text-gray-500">{t('settings.autoStartDescription')}</div>
           </div>
           <label className="relative inline-flex items-center cursor-pointer">
             <input
@@ -145,23 +184,23 @@ export default function Settings() {
 
         {/* Claude Code 설정 경로 */}
         <div className="py-3 border-b">
-          <div className="font-medium text-gray-900 mb-2">Claude Code 설정 파일</div>
+          <div className="font-medium text-gray-900 mb-2">{t('settings.claudeSettingsFile')}</div>
           <div className="bg-gray-50 rounded p-3">
             <code className="text-sm text-gray-700">~/.claude/settings.json</code>
           </div>
           <div className="mt-2 text-sm text-gray-500">
-            계정 전환 시 자동으로 업데이트됩니다
+            {t('settings.claudeSettingsDescription')}
           </div>
         </div>
 
         {/* 데이터 관리 */}
         <div className="py-3">
-          <div className="font-medium text-gray-900 mb-2">데이터 관리</div>
+          <div className="font-medium text-gray-900 mb-2">{t('settings.dataManagement')}</div>
           <button
             onClick={handleClearUsage}
             className="px-4 py-2 bg-red-100 text-red-700 rounded hover:bg-red-200 text-sm"
           >
-            사용량 로그 초기화
+            {t('settings.clearUsage')}
           </button>
         </div>
       </div>

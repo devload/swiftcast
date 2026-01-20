@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 
 interface Account {
@@ -14,6 +15,7 @@ interface AccountManagerProps {
 }
 
 export default function AccountManager({ onAccountChange }: AccountManagerProps) {
+  const { t } = useTranslation();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [showAddForm, setShowAddForm] = useState(false);
   const [newAccount, setNewAccount] = useState({
@@ -27,7 +29,6 @@ export default function AccountManager({ onAccountChange }: AccountManagerProps)
   useEffect(() => {
     loadAccounts();
 
-    // 자동 업데이트: 2초마다 계정 목록 확인
     const interval = setInterval(() => {
       loadAccounts();
     }, 2000);
@@ -46,7 +47,7 @@ export default function AccountManager({ onAccountChange }: AccountManagerProps)
 
   const handleAddAccount = async () => {
     if (!newAccount.name || !newAccount.base_url || !newAccount.api_key) {
-      alert('모든 필드를 입력해주세요');
+      alert(t('accounts.fillAllFields'));
       return;
     }
 
@@ -62,7 +63,6 @@ export default function AccountManager({ onAccountChange }: AccountManagerProps)
       onAccountChange();
     } catch (error) {
       console.error('Failed to create account:', error);
-      alert(`계정 생성 실패: ${error}`);
     }
   };
 
@@ -73,12 +73,11 @@ export default function AccountManager({ onAccountChange }: AccountManagerProps)
       onAccountChange();
     } catch (error) {
       console.error('Failed to switch account:', error);
-      alert(`계정 전환 실패: ${error}`);
     }
   };
 
   const handleDeleteAccount = async (accountId: string) => {
-    if (!confirm('정말 이 계정을 삭제하시겠습니까?')) {
+    if (!confirm(t('accounts.confirmDelete'))) {
       return;
     }
 
@@ -88,7 +87,6 @@ export default function AccountManager({ onAccountChange }: AccountManagerProps)
       onAccountChange();
     } catch (error) {
       console.error('Failed to delete account:', error);
-      alert(`계정 삭제 실패: ${error}`);
     }
   };
 
@@ -107,11 +105,10 @@ export default function AccountManager({ onAccountChange }: AccountManagerProps)
       await loadAccounts();
       onAccountChange();
 
-      // 5초 후 메시지 숨김
       setTimeout(() => setScanMessages([]), 5000);
     } catch (error) {
       console.error('Failed to auto scan:', error);
-      setScanMessages([`❌ 스캔 실패: ${error}`]);
+      setScanMessages([`❌ Scan failed: ${error}`]);
     } finally {
       setScanning(false);
     }
@@ -120,20 +117,20 @@ export default function AccountManager({ onAccountChange }: AccountManagerProps)
   return (
     <div className="bg-white rounded-lg shadow p-6">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold text-gray-900">계정 관리</h2>
+        <h2 className="text-lg font-semibold text-gray-900">{t('accounts.title')}</h2>
         <div className="flex space-x-2">
           <button
             onClick={handleAutoScan}
             disabled={scanning}
             className="bg-purple-600 hover:bg-purple-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white text-sm font-medium py-2 px-4 rounded-lg transition-colors"
           >
-            {scanning ? '🔍 스캔 중...' : '🔍 Auto Scan'}
+            {scanning ? `🔍 ${t('accounts.scanning')}` : `🔍 ${t('accounts.autoScan')}`}
           </button>
           <button
             onClick={() => setShowAddForm(!showAddForm)}
             className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-2 px-4 rounded-lg transition-colors"
           >
-            {showAddForm ? '취소' : '+ 계정 추가'}
+            {showAddForm ? t('accounts.cancel') : `+ ${t('accounts.addAccount')}`}
           </button>
         </div>
       </div>
@@ -153,19 +150,19 @@ export default function AccountManager({ onAccountChange }: AccountManagerProps)
           <div className="space-y-3">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                계정 이름
+                {t('accounts.accountName')}
               </label>
               <input
                 type="text"
                 value={newAccount.name}
                 onChange={(e) => setNewAccount({ ...newAccount, name: e.target.value })}
-                placeholder="예: My GLM Account"
+                placeholder={t('accounts.accountNamePlaceholder')}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Base URL
+                {t('accounts.baseUrl')}
               </label>
               <select
                 value={newAccount.base_url}
@@ -179,20 +176,20 @@ export default function AccountManager({ onAccountChange }: AccountManagerProps)
                   paddingRight: '2.5rem'
                 }}
               >
-                <option value="">선택하세요</option>
-                <option value="https://api.anthropic.com">Anthropic (Claude)</option>
-                <option value="https://api.z.ai/api/anthropic">GLM (Z.AI)</option>
+                <option value="">{t('accounts.selectBaseUrl')}</option>
+                <option value="https://api.anthropic.com">{t('accounts.anthropic')}</option>
+                <option value="https://api.z.ai/api/anthropic">{t('accounts.glm')}</option>
               </select>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                API Key
+                {t('accounts.apiKey')}
               </label>
               <input
                 type="password"
                 value={newAccount.api_key}
                 onChange={(e) => setNewAccount({ ...newAccount, api_key: e.target.value })}
-                placeholder="sk-ant-... 또는 GLM API 키"
+                placeholder={t('accounts.apiKeyPlaceholder')}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
@@ -200,7 +197,7 @@ export default function AccountManager({ onAccountChange }: AccountManagerProps)
               onClick={handleAddAccount}
               className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg transition-colors"
             >
-              추가
+              {t('accounts.add')}
             </button>
           </div>
         </div>
@@ -210,7 +207,7 @@ export default function AccountManager({ onAccountChange }: AccountManagerProps)
       <div className="space-y-2">
         {accounts.length === 0 ? (
           <div className="text-center text-gray-500 py-8">
-            계정이 없습니다. 계정을 추가해주세요.
+            {t('accounts.noAccounts')}
           </div>
         ) : (
           accounts.map((account) => (
@@ -228,7 +225,7 @@ export default function AccountManager({ onAccountChange }: AccountManagerProps)
                     <h3 className="font-medium text-gray-900">{account.name}</h3>
                     {account.is_active && (
                       <span className="bg-blue-600 text-white text-xs px-2 py-0.5 rounded-full">
-                        활성
+                        {t('accounts.active')}
                       </span>
                     )}
                   </div>
@@ -240,14 +237,14 @@ export default function AccountManager({ onAccountChange }: AccountManagerProps)
                       onClick={() => handleSwitchAccount(account.id)}
                       className="bg-green-600 hover:bg-green-700 text-white text-sm font-medium py-1 px-3 rounded transition-colors"
                     >
-                      활성화
+                      {t('accounts.activate')}
                     </button>
                   )}
                   <button
                     onClick={() => handleDeleteAccount(account.id)}
                     className="bg-red-600 hover:bg-red-700 text-white text-sm font-medium py-1 px-3 rounded transition-colors"
                   >
-                    삭제
+                    {t('accounts.delete')}
                   </button>
                 </div>
               </div>

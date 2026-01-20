@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import Dashboard from './components/Dashboard';
 import AccountManager from './components/AccountManager';
@@ -6,6 +7,7 @@ import UsageMonitor from './components/UsageMonitor';
 import Settings from './components/Settings';
 
 function App() {
+  const { t } = useTranslation();
   const [proxyRunning, setProxyRunning] = useState(false);
   const [activeAccount, setActiveAccount] = useState<any>(null);
 
@@ -47,8 +49,8 @@ function App() {
         <div className="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-2xl font-bold text-gray-900">SwiftCast</h1>
-              <p className="text-sm text-gray-500">AI Provider 스위칭 & 사용량 모니터링</p>
+              <h1 className="text-2xl font-bold text-gray-900">{t('app.title')}</h1>
+              <p className="text-sm text-gray-500">{t('app.subtitle')}</p>
             </div>
             <div className="flex items-center space-x-4">
               <div className={`px-3 py-1 rounded-full text-sm font-medium ${
@@ -56,7 +58,7 @@ function App() {
                   ? 'bg-green-100 text-green-800'
                   : 'bg-gray-100 text-gray-800'
               }`}>
-                {proxyRunning ? '● 실행 중' : '○ 중지됨'}
+                {proxyRunning ? `● ${t('app.status.running')}` : `○ ${t('app.status.stopped')}`}
               </div>
             </div>
           </div>

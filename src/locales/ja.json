@@ -1,0 +1,97 @@
+{
+  "app": {
+    "title": "SwiftCast",
+    "subtitle": "AIプロバイダー切り替え & 使用量モニタリング",
+    "status": {
+      "running": "実行中",
+      "stopped": "停止"
+    }
+  },
+  "nav": {
+    "dashboard": "ダッシュボード",
+    "accounts": "アカウント",
+    "usage": "使用量",
+    "settings": "設定"
+  },
+  "dashboard": {
+    "title": "プロキシ制御",
+    "activeAccount": "アクティブアカウント",
+    "noActiveAccount": "アクティブなアカウントがありません",
+    "startProxy": "プロキシ開始",
+    "stopProxy": "プロキシ停止",
+    "port": "ポート",
+    "status": "状態",
+    "autoStart": "自動起動",
+    "claudeSettings": "Claude Code設定（自動適用）",
+    "running": "実行中",
+    "stopped": "停止"
+  },
+  "accounts": {
+    "title": "アカウント管理",
+    "autoScan": "自動スキャン",
+    "scanning": "スキャン中...",
+    "addAccount": "アカウント追加",
+    "cancel": "キャンセル",
+    "accountName": "アカウント名",
+    "accountNamePlaceholder": "例: My GLM Account",
+    "baseUrl": "Base URL",
+    "selectBaseUrl": "選択してください",
+    "anthropic": "Anthropic (Claude)",
+    "glm": "GLM (Z.AI)",
+    "apiKey": "APIキー",
+    "apiKeyPlaceholder": "sk-ant-... または GLM APIキー",
+    "add": "追加",
+    "activate": "有効化",
+    "delete": "削除",
+    "active": "アクティブ",
+    "noAccounts": "アカウントがありません。アカウントを追加してください。",
+    "confirmDelete": "このアカウントを削除してもよろしいですか？",
+    "fillAllFields": "すべてのフィールドを入力してください"
+  },
+  "usage": {
+    "title": "使用量モニタリング",
+    "tabs": {
+      "overview": "概要",
+      "models": "モデル別",
+      "daily": "日別",
+      "sessions": "セッション別",
+      "logs": "最近のログ"
+    },
+    "requestCount": "リクエスト数",
+    "requestCountTooltip": "Claude APIに送信したリクエストの総数",
+    "inputTokens": "入力トークン",
+    "inputTokensTooltip": "システムプロンプト + 会話履歴 + ユーザーメッセージに使用されたトークン",
+    "outputTokens": "出力トークン",
+    "outputTokensTooltip": "Claudeが生成した応答に使用されたトークン",
+    "totalTokens": "合計トークン",
+    "totalTokensTooltip": "入力トークン + 出力トークン = 総使用量（コスト計算の基準）",
+    "requests": "回リクエスト",
+    "input": "入力",
+    "output": "出力",
+    "total": "合計",
+    "tokens": "トークン",
+    "noData": "データなし",
+    "sessionId": "セッションID"
+  },
+  "settings": {
+    "title": "設定",
+    "proxyPort": "プロキシポート",
+    "proxyPortDesc": "Claude Codeが接続するローカルプロキシポート",
+    "change": "変更",
+    "autoStart": "自動起動",
+    "autoStartDesc": "アプリ起動時にプロキシを自動的に開始",
+    "language": "言語",
+    "languageDesc": "アプリの表示言語を選択",
+    "claudeSettingsFile": "Claude Code設定ファイル",
+    "claudeSettingsDesc": "アカウント切り替え時に自動更新されます",
+    "dataManagement": "データ管理",
+    "clearUsageLogs": "使用量ログをクリア",
+    "confirmClearLogs": "すべての使用量ログを削除してもよろしいですか？"
+  },
+  "languages": {
+    "ko": "한국어",
+    "en": "English",
+    "ja": "日本語",
+    "zh": "中文"
+  }
+}

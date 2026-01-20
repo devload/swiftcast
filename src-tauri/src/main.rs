@@ -9,6 +9,11 @@ mod storage;
 use proxy::ProxyServer;
 use std::sync::Arc;
 use storage::Database;
+use tauri::{
+    menu::{Menu, MenuItem, PredefinedMenuItem},
+    tray::TrayIconBuilder,
+    Manager, WindowEvent,
+};
 use tokio::sync::RwLock;
 
 pub struct AppState {
@@ -86,6 +91,42 @@ async fn main() {
             commands::get_usage_by_session,
             commands::clear_usage_logs,
         ])
+        .setup(|app| {
+            // 트레이 메뉴 생성
+            let show_i = MenuItem::with_id(app, "show", "SwiftCast 열기", true, None::<&str>)?;
+            let separator = PredefinedMenuItem::separator(app)?;
+            let quit_i = MenuItem::with_id(app, "quit", "종료", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show_i, &separator, &quit_i])?;
+
+            // 트레이 아이콘 생성
+            let _tray = TrayIconBuilder::new()
+                .icon(app.default_window_icon().unwrap().clone())
+                .menu(&menu)
+                .show_menu_on_left_click(true)
+                .tooltip("SwiftCast - AI API Proxy")
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                    "quit" => {
+                        app.exit(0);
+                    }
+                    _ => {}
+                })
+                .build(app)?;
+
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            // 창 닫기 버튼 클릭 시 숨기기 (종료하지 않음)
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                let _ = window.hide();
+                api.prevent_close();
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

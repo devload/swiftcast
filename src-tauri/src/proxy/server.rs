@@ -17,7 +17,6 @@ use tower_http::cors::CorsLayer;
 #[derive(Debug, Clone, Default)]
 struct RequestInfo {
     model: String,
-    stream: bool,
 }
 
 // 응답에서 사용량 정보 추출
@@ -31,7 +30,6 @@ fn parse_request_info(body: &[u8]) -> RequestInfo {
     if let Ok(json) = serde_json::from_slice::<serde_json::Value>(body) {
         RequestInfo {
             model: json.get("model").and_then(|v| v.as_str()).unwrap_or("unknown").to_string(),
-            stream: json.get("stream").and_then(|v| v.as_bool()).unwrap_or(true),
         }
     } else {
         RequestInfo::default()

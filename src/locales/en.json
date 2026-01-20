@@ -1,0 +1,97 @@
+{
+  "app": {
+    "title": "SwiftCast",
+    "subtitle": "AI Provider Switching & Usage Monitoring",
+    "status": {
+      "running": "Running",
+      "stopped": "Stopped"
+    }
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "accounts": "Accounts",
+    "usage": "Usage",
+    "settings": "Settings"
+  },
+  "dashboard": {
+    "title": "Proxy Control",
+    "activeAccount": "Active Account",
+    "noActiveAccount": "No active account",
+    "startProxy": "Start Proxy",
+    "stopProxy": "Stop Proxy",
+    "port": "Port",
+    "status": "Status",
+    "autoStart": "Auto Start",
+    "claudeSettings": "Claude Code Settings (Auto-applied)",
+    "running": "Running",
+    "stopped": "Stopped"
+  },
+  "accounts": {
+    "title": "Account Management",
+    "autoScan": "Auto Scan",
+    "scanning": "Scanning...",
+    "addAccount": "Add Account",
+    "cancel": "Cancel",
+    "accountName": "Account Name",
+    "accountNamePlaceholder": "e.g., My GLM Account",
+    "baseUrl": "Base URL",
+    "selectBaseUrl": "Select",
+    "anthropic": "Anthropic (Claude)",
+    "glm": "GLM (Z.AI)",
+    "apiKey": "API Key",
+    "apiKeyPlaceholder": "sk-ant-... or GLM API key",
+    "add": "Add",
+    "activate": "Activate",
+    "delete": "Delete",
+    "active": "Active",
+    "noAccounts": "No accounts. Please add an account.",
+    "confirmDelete": "Are you sure you want to delete this account?",
+    "fillAllFields": "Please fill in all fields"
+  },
+  "usage": {
+    "title": "Usage Monitoring",
+    "tabs": {
+      "overview": "Overview",
+      "models": "By Model",
+      "daily": "Daily",
+      "sessions": "By Session",
+      "logs": "Recent Logs"
+    },
+    "requestCount": "Requests",
+    "requestCountTooltip": "Total number of requests sent to Claude API",
+    "inputTokens": "Input Tokens",
+    "inputTokensTooltip": "Tokens used for system prompt + conversation history + user message",
+    "outputTokens": "Output Tokens",
+    "outputTokensTooltip": "Tokens used by Claude's generated response",
+    "totalTokens": "Total Tokens",
+    "totalTokensTooltip": "Input tokens + Output tokens = Total usage (basis for cost calculation)",
+    "requests": " requests",
+    "input": "Input",
+    "output": "Output",
+    "total": "Total",
+    "tokens": "tokens",
+    "noData": "No data",
+    "sessionId": "Session ID"
+  },
+  "settings": {
+    "title": "Settings",
+    "proxyPort": "Proxy Port",
+    "proxyPortDesc": "Local proxy port for Claude Code connection",
+    "change": "Change",
+    "autoStart": "Auto Start",
+    "autoStartDesc": "Automatically start proxy when app launches",
+    "language": "Language",
+    "languageDesc": "Select app display language",
+    "claudeSettingsFile": "Claude Code Settings File",
+    "claudeSettingsDesc": "Automatically updated when switching accounts",
+    "dataManagement": "Data Management",
+    "clearUsageLogs": "Clear Usage Logs",
+    "confirmClearLogs": "Are you sure you want to delete all usage logs?"
+  },
+  "languages": {
+    "ko": "한국어",
+    "en": "English",
+    "ja": "日本語",
+    "zh": "中文"
+  }
+}

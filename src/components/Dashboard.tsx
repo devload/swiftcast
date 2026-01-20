@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 
 interface DashboardProps {
   proxyRunning: boolean;
@@ -13,6 +14,7 @@ interface AppConfig {
 }
 
 export default function Dashboard({ proxyRunning, activeAccount, onProxyToggle }: DashboardProps) {
+  const { t } = useTranslation();
   const [config, setConfig] = useState<AppConfig>({ proxy_port: 32080, auto_start: true });
   const [editingPort, setEditingPort] = useState(false);
   const [portInput, setPortInput] = useState('32080');
@@ -37,7 +39,6 @@ export default function Dashboard({ proxyRunning, activeAccount, onProxyToggle }
       onProxyToggle();
     } catch (error) {
       console.error('Failed to start proxy:', error);
-      alert(`프록시 시작 실패: ${error}`);
     }
   };
 
@@ -47,14 +48,12 @@ export default function Dashboard({ proxyRunning, activeAccount, onProxyToggle }
       onProxyToggle();
     } catch (error) {
       console.error('Failed to stop proxy:', error);
-      alert(`프록시 중지 실패: ${error}`);
     }
   };
 
   const handlePortChange = async () => {
     const port = parseInt(portInput, 10);
     if (isNaN(port) || port < 1024 || port > 65535) {
-      alert('포트는 1024-65535 범위여야 합니다');
       return;
     }
 
@@ -64,7 +63,6 @@ export default function Dashboard({ proxyRunning, activeAccount, onProxyToggle }
       setEditingPort(false);
     } catch (error) {
       console.error('Failed to set port:', error);
-      alert(`포트 변경 실패: ${error}`);
     }
   };
 
@@ -80,19 +78,19 @@ export default function Dashboard({ proxyRunning, activeAccount, onProxyToggle }
 
   return (
     <div className="bg-white rounded-lg shadow p-6">
-      <h2 className="text-lg font-semibold text-gray-900 mb-4">프록시 제어</h2>
+      <h2 className="text-lg font-semibold text-gray-900 mb-4">{t('dashboard.title')}</h2>
 
       <div className="space-y-4">
         {/* 활성 계정 정보 */}
         <div className="bg-blue-50 rounded-lg p-4">
-          <div className="text-sm text-blue-600 font-medium mb-1">활성 계정</div>
+          <div className="text-sm text-blue-600 font-medium mb-1">{t('dashboard.activeAccount')}</div>
           {activeAccount ? (
             <div>
               <div className="text-lg font-semibold text-gray-900">{activeAccount.name}</div>
               <div className="text-sm text-gray-600 mt-1">{activeAccount.base_url}</div>
             </div>
           ) : (
-            <div className="text-gray-500">계정이 없습니다</div>
+            <div className="text-gray-500">{t('dashboard.noActiveAccount')}</div>
           )}
         </div>
 
@@ -104,14 +102,14 @@ export default function Dashboard({ proxyRunning, activeAccount, onProxyToggle }
               disabled={!activeAccount}
               className="flex-1 bg-green-600 hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-medium py-2 px-4 rounded-lg transition-colors"
             >
-              프록시 시작
+              {t('dashboard.startProxy')}
             </button>
           ) : (
             <button
               onClick={handleStopProxy}
               className="flex-1 bg-red-600 hover:bg-red-700 text-white font-medium py-2 px-4 rounded-lg transition-colors"
             >
-              프록시 중지
+              {t('dashboard.stopProxy')}
             </button>
           )}
         </div>
@@ -120,7 +118,7 @@ export default function Dashboard({ proxyRunning, activeAccount, onProxyToggle }
         <div className="bg-gray-50 rounded-lg p-4">
           <div className="grid grid-cols-3 gap-4 text-sm">
             <div>
-              <div className="text-gray-500 mb-1">포트</div>
+              <div className="text-gray-500 mb-1">{t('dashboard.port')}</div>
               {editingPort ? (
                 <div className="flex items-center space-x-2">
                   <input
@@ -135,7 +133,7 @@ export default function Dashboard({ proxyRunning, activeAccount, onProxyToggle }
                     onClick={handlePortChange}
                     className="text-green-600 hover:text-green-700 text-xs"
                   >
-                    저장
+                    OK
                   </button>
                   <button
                     onClick={() => {
@@ -144,7 +142,7 @@ export default function Dashboard({ proxyRunning, activeAccount, onProxyToggle }
                     }}
                     className="text-gray-500 hover:text-gray-700 text-xs"
                   >
-                    취소
+                    {t('accounts.cancel')}
                   </button>
                 </div>
               ) : (
@@ -155,20 +153,20 @@ export default function Dashboard({ proxyRunning, activeAccount, onProxyToggle }
                       onClick={() => setEditingPort(true)}
                       className="text-blue-600 hover:text-blue-700 text-xs"
                     >
-                      변경
+                      {t('settings.change')}
                     </button>
                   )}
                 </div>
               )}
             </div>
             <div>
-              <div className="text-gray-500 mb-1">상태</div>
+              <div className="text-gray-500 mb-1">{t('dashboard.status')}</div>
               <div className={`font-medium ${proxyRunning ? 'text-green-600' : 'text-gray-600'}`}>
-                {proxyRunning ? '실행 중' : '중지됨'}
+                {proxyRunning ? t('dashboard.running') : t('dashboard.stopped')}
               </div>
             </div>
             <div>
-              <div className="text-gray-500 mb-1">자동 시작</div>
+              <div className="text-gray-500 mb-1">{t('dashboard.autoStart')}</div>
               <label className="flex items-center cursor-pointer">
                 <input
                   type="checkbox"
@@ -188,7 +186,7 @@ export default function Dashboard({ proxyRunning, activeAccount, onProxyToggle }
         {proxyRunning && (
           <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
             <div className="text-sm text-yellow-800">
-              <div className="font-medium mb-1">Claude Code 설정 (자동 적용됨)</div>
+              <div className="font-medium mb-1">{t('dashboard.claudeSettings')}</div>
               <div className="text-xs">
                 <code className="bg-yellow-100 px-2 py-1 rounded">
                   ~/.claude/settings.json

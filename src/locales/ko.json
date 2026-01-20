@@ -1,0 +1,97 @@
+{
+  "app": {
+    "title": "SwiftCast",
+    "subtitle": "AI Provider 스위칭 & 사용량 모니터링",
+    "status": {
+      "running": "실행 중",
+      "stopped": "중지됨"
+    }
+  },
+  "nav": {
+    "dashboard": "대시보드",
+    "accounts": "계정",
+    "usage": "사용량",
+    "settings": "설정"
+  },
+  "dashboard": {
+    "title": "프록시 제어",
+    "activeAccount": "활성 계정",
+    "noActiveAccount": "활성화된 계정이 없습니다",
+    "startProxy": "프록시 시작",
+    "stopProxy": "프록시 중지",
+    "port": "포트",
+    "status": "상태",
+    "autoStart": "자동 시작",
+    "claudeSettings": "Claude Code 설정 (자동 적용됨)",
+    "running": "실행 중",
+    "stopped": "중지됨"
+  },
+  "accounts": {
+    "title": "계정 관리",
+    "autoScan": "Auto Scan",
+    "scanning": "스캔 중...",
+    "addAccount": "계정 추가",
+    "cancel": "취소",
+    "accountName": "계정 이름",
+    "accountNamePlaceholder": "예: My GLM Account",
+    "baseUrl": "Base URL",
+    "selectBaseUrl": "선택하세요",
+    "anthropic": "Anthropic (Claude)",
+    "glm": "GLM (Z.AI)",
+    "apiKey": "API Key",
+    "apiKeyPlaceholder": "sk-ant-... 또는 GLM API 키",
+    "add": "추가",
+    "activate": "활성화",
+    "delete": "삭제",
+    "active": "활성",
+    "noAccounts": "계정이 없습니다. 계정을 추가해주세요.",
+    "confirmDelete": "정말 이 계정을 삭제하시겠습니까?",
+    "fillAllFields": "모든 필드를 입력해주세요"
+  },
+  "usage": {
+    "title": "사용량 모니터링",
+    "tabs": {
+      "overview": "개요",
+      "models": "모델별",
+      "daily": "일별",
+      "sessions": "세션별",
+      "logs": "최근 로그"
+    },
+    "requestCount": "요청 수",
+    "requestCountTooltip": "Claude API에 보낸 총 요청 횟수",
+    "inputTokens": "입력 토큰",
+    "inputTokensTooltip": "시스템 프롬프트 + 대화 히스토리 + 사용자 메시지에 사용된 토큰",
+    "outputTokens": "출력 토큰",
+    "outputTokensTooltip": "Claude가 생성한 응답에 사용된 토큰",
+    "totalTokens": "총 토큰",
+    "totalTokensTooltip": "입력 토큰 + 출력 토큰 = 총 사용량 (비용 계산의 기준)",
+    "requests": "회 요청",
+    "input": "입력",
+    "output": "출력",
+    "total": "총",
+    "tokens": "토큰",
+    "noData": "데이터 없음",
+    "sessionId": "세션 ID"
+  },
+  "settings": {
+    "title": "설정",
+    "proxyPort": "프록시 포트",
+    "proxyPortDesc": "Claude Code가 연결할 로컬 프록시 포트",
+    "change": "변경",
+    "autoStart": "자동 시작",
+    "autoStartDesc": "앱 실행 시 프록시 자동 시작",
+    "language": "언어",
+    "languageDesc": "앱 표시 언어 선택",
+    "claudeSettingsFile": "Claude Code 설정 파일",
+    "claudeSettingsDesc": "계정 전환 시 자동으로 업데이트됩니다",
+    "dataManagement": "데이터 관리",
+    "clearUsageLogs": "사용량 로그 초기화",
+    "confirmClearLogs": "모든 사용량 로그를 삭제하시겠습니까?"
+  },
+  "languages": {
+    "ko": "한국어",
+    "en": "English",
+    "ja": "日本語",
+    "zh": "中文"
+  }
+}

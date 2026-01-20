@@ -240,21 +240,26 @@ pub async fn get_proxy_status(state: State<'_, AppState>) -> Result<ProxyStatus,
 }
 
 // Claude 설정 경로 가져오기
+// Claude Code는 모든 플랫폼에서 ~/.claude/settings.json 사용
 fn get_claude_settings_path() -> Result<PathBuf, String> {
-    // Windows: %APPDATA%\Claude\settings.json
-    // macOS/Linux: ~/.claude/settings.json
+    let home = get_home_dir()?;
+    Ok(PathBuf::from(home).join(".claude").join("settings.json"))
+}
+
+// 크로스 플랫폼 홈 디렉토리 가져오기
+fn get_home_dir() -> Result<String, String> {
+    // Windows: USERPROFILE 환경변수 사용
+    // macOS/Linux: HOME 환경변수 사용
     #[cfg(target_os = "windows")]
     {
-        let appdata = std::env::var("APPDATA")
-            .map_err(|e| format!("Failed to get APPDATA: {}", e))?;
-        Ok(PathBuf::from(appdata).join("Claude").join("settings.json"))
+        std::env::var("USERPROFILE")
+            .map_err(|e| format!("Failed to get USERPROFILE: {}", e))
     }
 
     #[cfg(not(target_os = "windows"))]
     {
-        let home = std::env::var("HOME")
-            .map_err(|e| format!("Failed to get HOME: {}", e))?;
-        Ok(PathBuf::from(home).join(".claude").join("settings.json"))
+        std::env::var("HOME")
+            .map_err(|e| format!("Failed to get HOME: {}", e))
     }
 }
 
