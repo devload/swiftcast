@@ -55,7 +55,7 @@ jobs:
           if-no-files-found: ignore
 
   build-windows:
-    runs-on: windows-latest
+    runs-on: windows-2019
 
     steps:
       - name: Checkout
@@ -66,11 +66,6 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-
-      - name: Setup MSVC
-        uses: TheMrMilchworker/setup-msvc-dev@v3
-        with:
-          arch: x64
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
