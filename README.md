@@ -1,60 +1,94 @@
 # SwiftCast
 
-**Claude와 GLM을 자유롭게 스위칭하고 사용량을 모니터링하는 데스크톱 프로그램**
+**Claude Code의 AI Provider를 자유롭게 스위칭하고 사용량을 모니터링하는 데스크톱 앱**
 
-## ✨ 핵심 기능
+![Dashboard](docs/01-dashboard.png)
 
-1. **Provider 스위칭**: Claude ↔ GLM 간 한 번의 클릭으로 전환
-2. **사용량 모니터링**: Provider별 토큰, 비용, 시간 추적
-3. **프록시 서버**: Claude Code가 선택된 Provider 사용
+## 주요 기능
 
-## 🏗️ 기술 스택
+- **Provider 스위칭**: Anthropic (Claude) ↔ GLM 간 한 번의 클릭으로 전환
+- **사용량 모니터링**: 토큰 사용량을 세션별/모델별/일별로 추적
+- **프록시 자동 설정**: Claude Code의 settings.json을 자동으로 관리
+- **Auto Scan**: macOS Keychain에서 기존 Claude 인증 정보 자동 가져오기
 
-- **Backend**: Rust (Tauri 2.x, axum, SQLite)
-- **Frontend**: React + TypeScript + Vite + TailwindCSS
-- **플랫폼**: Windows + macOS (크로스 플랫폼)
+## 설치
 
-## 📋 요구사항
+### macOS
+1. [Releases](../../releases)에서 `.dmg` 파일 다운로드
+2. DMG 마운트 후 SwiftCast.app을 Applications 폴더로 이동
+3. 앱 실행
 
-- ✅ **크로스 플랫폼**: Windows, macOS에서 동일하게 작동
-- ✅ **런타임 독립**: JRE, Node.js 등 추가 설치 불필요
-- ✅ **단독 실행**: 더블클릭으로 즉시 실행
-- ✅ **작은 크기**: 5-10MB (Electron 대비 1/20)
-
-## 🚀 사용 방법
-
-### 1. 개발 모드 실행
-
+### 직접 빌드
 ```bash
+# 의존성 설치
 npm install
-npm run tauri:dev
+
+# 개발 모드 실행
+npm run tauri dev
+
+# 릴리스 빌드
+npm run tauri build
 ```
 
-### 2. 릴리스 빌드
+빌드 결과물:
+- `src-tauri/target/release/bundle/macos/SwiftCast.app`
+- `src-tauri/target/release/bundle/dmg/SwiftCast_x.x.x_aarch64.dmg`
 
-```bash
-npm run tauri:build
-```
+---
 
-## 📝 핵심 작동 원리
+## 사용자 가이드
 
-### Claude Code 설정
+### 1. 계정 등록
 
-**파일**:
-- macOS: `~/.claude/settings.json`
-- Windows: `%APPDATA%\Claude\settings.json`
+![Accounts](docs/02-accounts.png)
 
-```json
-{
-  "env": {
-    "ANTHROPIC_BASE_URL": "http://localhost:32080"
-  }
-}
-```
+#### Auto Scan (macOS)
+- **Auto Scan** 버튼 클릭
+- macOS Keychain에서 기존 Claude 인증 정보를 자동으로 가져옴
+- Anthropic Official 계정이 자동 등록됨
 
-**참고**: Claude(Anthropic)로 전환 시 settings.json이 자동 삭제되어 공식 API를 직접 사용합니다.
+#### 수동 등록
+1. **+ 계정 추가** 버튼 클릭
+2. 계정 이름 입력 (예: "My GLM Account")
+3. Base URL 선택:
+   - `Anthropic (Claude)`: https://api.anthropic.com
+   - `GLM (Z.AI)`: https://api.z.ai/api/anthropic
+4. API Key 입력
+5. **추가** 버튼 클릭
 
-### 전체 흐름
+### 2. Provider 전환
+
+1. 계정 목록에서 사용할 계정의 **활성화** 버튼 클릭
+2. 프록시가 자동으로 해당 Provider로 전환됨
+3. Claude Code를 재시작하면 새 Provider 사용
+
+### 3. 사용량 모니터링
+
+![Usage](docs/03-usage.png)
+
+**개요 탭**:
+- 요청 수: Claude API 호출 횟수
+- 입력 토큰: 프롬프트에 사용된 토큰 (시스템 + 대화 히스토리 + 사용자 메시지)
+- 출력 토큰: Claude 응답에 사용된 토큰
+
+**다른 탭**:
+- 모델별: 각 모델(claude-sonnet-4, etc)별 사용량
+- 일별: 최근 7일간 일별 사용량
+- 세션별: Claude Code 세션별 사용량 (대화 단위)
+- 최근 로그: 개별 요청 기록
+
+### 4. 설정
+
+![Settings](docs/04-settings.png)
+
+- **프록시 포트**: Claude Code가 연결할 로컬 프록시 포트 (기본: 32080)
+- **자동 시작**: 앱 실행 시 프록시 자동 시작
+- **Claude Code 설정 파일**: `~/.claude/settings.json` 자동 관리
+- **사용량 로그 초기화**: 모든 사용량 기록 삭제
+
+---
+
+## 작동 원리
 
 ```
 Claude Code
@@ -64,11 +98,43 @@ SwiftCast Proxy (localhost:32080)
     ├─→ Anthropic API (OAuth 토큰 패스스루)
     └─→ GLM API (저장된 API 키 사용)
     ↓ (사용량 기록 - 토큰 추적)
-    ↓ (응답 전달)
 Claude Code
 ```
 
-## 📁 프로젝트 구조
+### Claude Code 연동
+
+SwiftCast는 `~/.claude/settings.json`을 자동으로 관리합니다:
+
+```json
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://localhost:32080"
+  }
+}
+```
+
+- 프록시 시작 시: settings.json 생성/업데이트
+- 프록시 중지 시: settings.json 삭제 (Claude Code가 직접 Anthropic API 사용)
+- 계정 전환 시: 자동 업데이트
+
+---
+
+## 기술 스택
+
+| 구분 | 기술 |
+|------|------|
+| Frontend | React + TypeScript + Vite + TailwindCSS |
+| Backend | Rust (Tauri 2.x, axum, SQLite) |
+| 플랫폼 | macOS, Windows (크로스 플랫폼) |
+
+### 특징
+- 런타임 불필요 (JRE, Node.js 등 설치 불필요)
+- 작은 용량 (~10MB, Electron 대비 1/20)
+- 더블클릭으로 바로 실행
+
+---
+
+## 프로젝트 구조
 
 ```
 swiftcast/
@@ -76,82 +142,62 @@ swiftcast/
 │   ├── components/
 │   │   ├── Dashboard.tsx       # 메인 대시보드
 │   │   ├── AccountManager.tsx  # 계정 관리
-│   │   ├── UsageMonitor.tsx    # 사용량 모니터링 (탭: 개요/모델별/일별/로그)
-│   │   └── Settings.tsx        # 설정 (포트, 자동시작)
-│   ├── App.tsx
-│   └── main.tsx
+│   │   ├── UsageMonitor.tsx    # 사용량 모니터링
+│   │   └── Settings.tsx        # 설정
+│   └── App.tsx
 │
 ├── src-tauri/             # Backend (Rust)
 │   ├── src/
-│   │   ├── models/        # 데이터 모델
-│   │   ├── storage/       # 데이터베이스 (SQLite)
 │   │   ├── proxy/         # 프록시 서버 (axum + SSE)
+│   │   ├── storage/       # 데이터베이스 (SQLite)
 │   │   ├── commands/      # Tauri commands
 │   │   └── main.rs
 │   └── Cargo.toml
 │
-├── 핵심_작동_원리.md       # 상세 설명
-├── 핵심_미션_정리.md       # 프로젝트 목표
-├── 프로젝트_목표.md        # 전체 비전
-└── 개발현황.md             # 개발 상태
+└── docs/                  # 스크린샷
 ```
 
-## 🎯 사용 시나리오
+---
 
-### 시나리오 1: 평소 Claude, 간단한 작업 GLM
-```
+## 사용 시나리오
+
+### 시나리오 1: GLM으로 비용 절감
+1. GLM 계정 등록 (Z.AI API Key)
+2. GLM 활성화하여 사용
+3. 사용량 모니터링으로 토큰 소비 확인
+
+### 시나리오 2: 멀티 Provider 운용
 1. Anthropic, GLM 계정 모두 등록
-2. 평소: Anthropic 활성화
-3. 간단한 작업: GLM으로 전환
-4. 각 Provider별 사용량 확인
-```
+2. 평소: 주력 Provider 사용
+3. 한도 도달 시: 다른 Provider로 전환
 
-### 시나리오 2: GLM 주력, Claude 백업
-```
-1. GLM을 주 계정으로 설정
-2. GLM 한도 도달 시 Anthropic으로 전환
-3. 통계로 총 비용 확인
-```
+---
 
-## 📚 문서
+## 개발
 
-- [핵심 작동 원리](./핵심_작동_원리.md) - 프록시 작동 방식 상세 설명
-- [핵심 미션 정리](./핵심_미션_정리.md) - 프로젝트 목표 요약
-- [프로젝트 목표](./프로젝트_목표.md) - 전체 비전 및 로드맵
-- [개발 현황](./개발현황.md) - 현재 개발 상태
+### 요구사항
+- Node.js 18+
+- Rust 1.70+
+- macOS: Xcode Command Line Tools
 
-## 🔧 개발 가이드
-
-### 계정 추가 (개발용)
-
-```rust
-// src-tauri/examples/add_account.rs 참고
-cargo run --example add_account "Account Name" "https://api.example.com" "api-key"
-```
-
-### 프록시 테스트
-
+### 명령어
 ```bash
-curl -X POST http://localhost:32080/v1/messages \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "claude-sonnet-4-5-20250929",
-    "max_tokens": 100,
-    "messages": [{"role": "user", "content": "안녕하세요"}]
-  }'
+# 개발 모드
+npm run tauri dev
+
+# 빌드
+npm run tauri build
+
+# 프론트엔드만 빌드
+npm run build
 ```
 
-## 💡 핵심 가치
+---
 
-1. **유연성** - 상황에 맞는 Provider 선택
-2. **투명성** - 명확한 사용량 추적
-3. **편의성** - Desktop UI로 간단하게
-4. **비용 최적화** - 선택을 통한 비용 절감
-
-## 📄 라이선스
+## 라이선스
 
 MIT License
 
-## 🤝 기여
+## 기여
 
 Issues와 Pull Requests를 환영합니다!
