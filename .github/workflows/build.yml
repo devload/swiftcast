@@ -67,18 +67,10 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
-      - name: Install Visual Studio Build Tools
+      - name: Install Rust GNU toolchain
         run: |
-          choco install visualstudio2022buildtools --package-parameters "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --quiet --norestart"
-        shell: powershell
-
-      - name: Setup MSVC environment
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+          rustup toolchain install stable-x86_64-pc-windows-gnu
+          rustup default stable-x86_64-pc-windows-gnu
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -92,14 +84,16 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --target x86_64-pc-windows-gnu
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: swiftcast-x86_64-pc-windows-msvc
+          name: swiftcast-x86_64-pc-windows-gnu
           path: |
-            src-tauri/target/release/bundle/msi/*.msi
-            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/x86_64-pc-windows-gnu/release/bundle/msi/*.msi
+            src-tauri/target/x86_64-pc-windows-gnu/release/bundle/nsis/*.exe
           if-no-files-found: ignore
 
   release:
