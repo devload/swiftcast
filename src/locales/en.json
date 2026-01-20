@@ -73,6 +73,24 @@
     "noData": "No data",
     "sessionId": "Session ID"
   },
+  "sessions": {
+    "title": "Session Management",
+    "activeSessions": "Active Sessions",
+    "noSessions": "No active sessions",
+    "sessionId": "Session ID",
+    "vendor": "Vendor",
+    "model": "Model",
+    "keepOriginal": "Keep Original",
+    "lastActivity": "Last Activity",
+    "requests": "Requests",
+    "tokens": "Tokens",
+    "delete": "Delete",
+    "refresh": "Refresh",
+    "justNow": "Just now",
+    "minutesAgo": "{{minutes}} min ago",
+    "hoursAgo": "{{hours}} hours ago",
+    "confirmDelete": "Are you sure you want to delete this session config?"
+  },
   "settings": {
     "title": "Settings",
     "proxyPort": "Proxy Port",

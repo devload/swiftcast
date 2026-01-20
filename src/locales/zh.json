@@ -73,6 +73,24 @@
     "noData": "暂无数据",
     "sessionId": "会话ID"
   },
+  "sessions": {
+    "title": "会话管理",
+    "activeSessions": "活动会话",
+    "noSessions": "没有活动会话",
+    "sessionId": "会话ID",
+    "vendor": "供应商",
+    "model": "模型",
+    "keepOriginal": "保持原样",
+    "lastActivity": "最后活动",
+    "requests": "请求",
+    "tokens": "令牌",
+    "delete": "删除",
+    "refresh": "刷新",
+    "justNow": "刚刚",
+    "minutesAgo": "{{minutes}}分钟前",
+    "hoursAgo": "{{hours}}小时前",
+    "confirmDelete": "确定要删除此会话配置吗？"
+  },
   "settings": {
     "title": "设置",
     "proxyPort": "代理端口",

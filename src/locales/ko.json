@@ -73,6 +73,24 @@
     "noData": "데이터 없음",
     "sessionId": "세션 ID"
   },
+  "sessions": {
+    "title": "세션 관리",
+    "activeSessions": "활성 세션",
+    "noSessions": "활성 세션이 없습니다",
+    "sessionId": "세션 ID",
+    "vendor": "벤더",
+    "model": "모델",
+    "keepOriginal": "원본 유지",
+    "lastActivity": "마지막 활동",
+    "requests": "요청",
+    "tokens": "토큰",
+    "delete": "삭제",
+    "refresh": "새로고침",
+    "justNow": "방금 전",
+    "minutesAgo": "{{minutes}}분 전",
+    "hoursAgo": "{{hours}}시간 전",
+    "confirmDelete": "이 세션 설정을 삭제하시겠습니까?"
+  },
   "settings": {
     "title": "설정",
     "proxyPort": "프록시 포트",

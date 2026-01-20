@@ -66,6 +66,14 @@ async fn main() {
     };
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            // 이미 실행 중인 인스턴스가 있으면 기존 창을 활성화
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }))
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
             commands::create_account,
@@ -90,6 +98,11 @@ async fn main() {
             commands::get_daily_usage,
             commands::get_usage_by_session,
             commands::clear_usage_logs,
+            // 세션 관리
+            commands::get_available_models,
+            commands::get_active_sessions,
+            commands::set_session_config,
+            commands::delete_session_config,
         ])
         .setup(|app| {
             // 트레이 메뉴 생성

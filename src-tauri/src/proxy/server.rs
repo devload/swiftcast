@@ -13,10 +13,11 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 
-// 요청에서 모델 정보 추출
+// 요청에서 모델 및 마지막 메시지 정보 추출
 #[derive(Debug, Clone, Default)]
 struct RequestInfo {
     model: String,
+    last_message: Option<String>,
 }
 
 // 응답에서 사용량 정보 추출
@@ -28,11 +29,106 @@ struct UsageInfo {
 
 fn parse_request_info(body: &[u8]) -> RequestInfo {
     if let Ok(json) = serde_json::from_slice::<serde_json::Value>(body) {
-        RequestInfo {
-            model: json.get("model").and_then(|v| v.as_str()).unwrap_or("unknown").to_string(),
-        }
+        let model = json.get("model").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+
+        // 마지막 user 메시지 추출 (최대 100자로 제한)
+        let last_message = json.get("messages")
+            .and_then(|v| v.as_array())
+            .and_then(|messages| {
+                // 배열 뒤에서부터 user role 찾기
+                messages.iter().rev().find(|msg| {
+                    msg.get("role").and_then(|r| r.as_str()) == Some("user")
+                })
+            })
+            .and_then(|msg| {
+                // content가 문자열인 경우
+                if let Some(content) = msg.get("content").and_then(|c| c.as_str()) {
+                    Some(content.to_string())
+                }
+                // content가 배열인 경우 (multimodal)
+                else if let Some(content_array) = msg.get("content").and_then(|c| c.as_array()) {
+                    content_array.iter()
+                        .find_map(|item| {
+                            if item.get("type").and_then(|t| t.as_str()) == Some("text") {
+                                item.get("text").and_then(|t| t.as_str()).map(|s| s.to_string())
+                            } else {
+                                None
+                            }
+                        })
+                } else {
+                    None
+                }
+            })
+            .map(|s| {
+                // 100자로 제한
+                if s.chars().count() > 100 {
+                    format!("{}...", s.chars().take(97).collect::<String>())
+                } else {
+                    s
+                }
+            });
+
+        RequestInfo { model, last_message }
     } else {
         RequestInfo::default()
+    }
+}
+
+// 요청 바디의 모델을 오버라이드
+fn override_model_in_body(body: &[u8], new_model: &str) -> (bytes::Bytes, RequestInfo) {
+    if let Ok(mut json) = serde_json::from_slice::<serde_json::Value>(body) {
+        let original = json
+            .get("model")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        // 마지막 user 메시지 추출 (오버라이드 전에 추출)
+        let last_message = json.get("messages")
+            .and_then(|v| v.as_array())
+            .and_then(|messages| {
+                messages.iter().rev().find(|msg| {
+                    msg.get("role").and_then(|r| r.as_str()) == Some("user")
+                })
+            })
+            .and_then(|msg| {
+                if let Some(content) = msg.get("content").and_then(|c| c.as_str()) {
+                    Some(content.to_string())
+                } else if let Some(content_array) = msg.get("content").and_then(|c| c.as_array()) {
+                    content_array.iter()
+                        .find_map(|item| {
+                            if item.get("type").and_then(|t| t.as_str()) == Some("text") {
+                                item.get("text").and_then(|t| t.as_str()).map(|s| s.to_string())
+                            } else {
+                                None
+                            }
+                        })
+                } else {
+                    None
+                }
+            })
+            .map(|s| {
+                if s.chars().count() > 100 {
+                    format!("{}...", s.chars().take(97).collect::<String>())
+                } else {
+                    s
+                }
+            });
+
+        json["model"] = serde_json::Value::String(new_model.to_string());
+
+        tracing::info!("MODEL OVERRIDE: {} -> {}", original, new_model);
+
+        let new_body = serde_json::to_vec(&json).unwrap_or_else(|_| body.to_vec());
+        (
+            bytes::Bytes::from(new_body),
+            RequestInfo {
+                model: new_model.to_string(),
+                last_message,
+            },
+        )
+    } else {
+        (bytes::Bytes::copy_from_slice(body), RequestInfo::default())
     }
 }
 
@@ -135,20 +231,6 @@ async fn proxy_handler(
     method: Method,
     req: Request,
 ) -> Result<Response, StatusCode> {
-    // 활성 계정 가져오기
-    let account = state
-        .db
-        .get_active_account()
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-
-    // API 키 로드
-    let api_key = state
-        .db
-        .get_api_key(&account.id)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
     // 요청 경로 (소유권 이전 전에 복사)
     let path = req.uri().path().to_string();
     let query = req.uri().query().unwrap_or("").to_string();
@@ -158,9 +240,6 @@ async fn proxy_handler(
         format!("{}?{}", path, query)
     };
 
-    // 타겟 URL 생성
-    let target_url = format!("{}{}", account.base_url, full_path);
-
     // 원본 헤더 저장
     let original_headers = req.headers().clone();
 
@@ -168,9 +247,6 @@ async fn proxy_handler(
     let body_bytes = axum::body::to_bytes(req.into_body(), usize::MAX)
         .await
         .map_err(|_| StatusCode::BAD_REQUEST)?;
-
-    // 요청 정보 파싱 (모델, 스트리밍 여부)
-    let request_info = parse_request_info(&body_bytes);
 
     // 세션 ID 추출 (sentry-trace 또는 baggage에서 trace_id 추출)
     let session_id = original_headers
@@ -186,6 +262,81 @@ async fn proxy_handler(
                 .and_then(|s| s.split('-').next())
                 .map(|s| s.to_string())
         });
+
+    // 세션별 계정 및 모델 오버라이드 결정
+    let (account, model_override, is_existing_session) = if let Some(ref sid) = session_id {
+        // 세션 설정이 있는지 확인
+        if let Ok(Some(config)) = state.db.get_session_config(sid).await {
+            // 세션 설정이 있으면 해당 계정 사용
+            let acc = state
+                .db
+                .get_account(&config.account_id)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+
+            tracing::info!(
+                "SESSION ROUTE: {} -> {} ({})",
+                &sid[..std::cmp::min(12, sid.len())],
+                acc.name,
+                config.model_override.as_deref().unwrap_or("original")
+            );
+
+            (acc, config.model_override, true)
+        } else {
+            // 새 세션: 활성 계정으로 자동 등록
+            let acc = state
+                .db
+                .get_active_account()
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+
+            // 세션 설정 자동 등록 (에러 무시)
+            let _ = state.db.upsert_session_config(sid, &acc.id, None).await;
+
+            tracing::info!(
+                "NEW SESSION: {} -> {} (auto-assigned)",
+                &sid[..std::cmp::min(12, sid.len())],
+                acc.name
+            );
+
+            (acc, None, false)
+        }
+    } else {
+        // 세션 ID 없음: 기존 동작 (활성 계정)
+        let acc = state
+            .db
+            .get_active_account()
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+        (acc, None, false)
+    };
+
+    // API 키 로드
+    let api_key = state
+        .db
+        .get_api_key(&account.id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // 모델 오버라이드 적용
+    let (body_bytes, request_info) = if let Some(ref model) = model_override {
+        override_model_in_body(&body_bytes, model)
+    } else {
+        let info = parse_request_info(&body_bytes);
+        (body_bytes, info)
+    };
+
+    // 세션 활동 시간 및 마지막 메시지 업데이트 (기존 세션인 경우)
+    if is_existing_session {
+        if let Some(ref sid) = session_id {
+            let _ = state.db.update_session_activity(sid, request_info.last_message.as_deref()).await;
+        }
+    }
+
+    // 타겟 URL 생성
+    let target_url = format!("{}{}", account.base_url, full_path);
 
     // HTTP 요청 생성
     let reqwest_method = match method.as_str() {

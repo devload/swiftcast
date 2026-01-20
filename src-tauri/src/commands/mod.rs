@@ -1,4 +1,4 @@
-use crate::{models::Account, proxy::ProxyServer, AppState};
+use crate::{models::{Account, SessionDetail}, proxy::ProxyServer, AppState};
 use tauri::State;
 use std::path::PathBuf;
 use std::fs;
@@ -556,4 +556,120 @@ pub async fn clear_usage_logs(state: State<'_, AppState>) -> Result<(), String> 
 #[tauri::command]
 pub async fn get_usage_by_session(state: State<'_, AppState>) -> Result<Vec<SessionUsageStats>, String> {
     state.db.get_usage_by_session().await.map_err(|e| e.to_string())
+}
+
+// ===== 세션 관리 Commands =====
+
+// 모델 정보
+#[derive(serde::Serialize, Clone)]
+pub struct ModelInfo {
+    pub id: String,
+    pub name: String,
+}
+
+// Anthropic 모델 목록
+fn get_anthropic_models() -> Vec<ModelInfo> {
+    vec![
+        ModelInfo {
+            id: "claude-sonnet-4-20250514".to_string(),
+            name: "Claude Sonnet 4".to_string(),
+        },
+        ModelInfo {
+            id: "claude-opus-4-20250514".to_string(),
+            name: "Claude Opus 4".to_string(),
+        },
+        ModelInfo {
+            id: "claude-3-5-haiku-20241022".to_string(),
+            name: "Claude 3.5 Haiku".to_string(),
+        },
+        ModelInfo {
+            id: "claude-3-5-sonnet-20241022".to_string(),
+            name: "Claude 3.5 Sonnet".to_string(),
+        },
+    ]
+}
+
+// GLM 모델 목록
+fn get_glm_models() -> Vec<ModelInfo> {
+    vec![
+        ModelInfo {
+            id: "glm-4".to_string(),
+            name: "GLM-4".to_string(),
+        },
+        ModelInfo {
+            id: "glm-4-flash".to_string(),
+            name: "GLM-4 Flash".to_string(),
+        },
+    ]
+}
+
+// Provider별 사용 가능한 모델 목록 조회
+#[tauri::command]
+pub async fn get_available_models(base_url: String) -> Result<Vec<ModelInfo>, String> {
+    if base_url.contains("anthropic.com") {
+        Ok(get_anthropic_models())
+    } else if base_url.contains("z.ai") || base_url.contains("glm") {
+        Ok(get_glm_models())
+    } else {
+        // 알 수 없는 provider - Anthropic 기본값 반환
+        Ok(get_anthropic_models())
+    }
+}
+
+// 활성 세션 목록 조회 (최근 24시간)
+#[tauri::command]
+pub async fn get_active_sessions(state: State<'_, AppState>) -> Result<Vec<SessionDetail>, String> {
+    state.db.get_active_sessions().await.map_err(|e| e.to_string())
+}
+
+// 세션 설정 변경 (계정 및 모델 오버라이드)
+#[tauri::command]
+pub async fn set_session_config(
+    session_id: String,
+    account_id: String,
+    model_override: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    // 계정이 존재하는지 확인
+    let account = state
+        .db
+        .get_account(&account_id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Account not found".to_string())?;
+
+    state
+        .db
+        .upsert_session_config(&session_id, &account_id, model_override.as_deref())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    tracing::info!(
+        "Session {} config updated: account={}, model={}",
+        &session_id[..std::cmp::min(12, session_id.len())],
+        account.name,
+        model_override.as_deref().unwrap_or("original")
+    );
+
+    Ok(())
+}
+
+// 세션 설정 삭제
+#[tauri::command]
+pub async fn delete_session_config(
+    session_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state
+        .db
+        .delete_session_config(&session_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    tracing::info!(
+        "Session {} config deleted",
+        &session_id[..std::cmp::min(12, session_id.len())]
+    );
+
+    Ok(())
 }

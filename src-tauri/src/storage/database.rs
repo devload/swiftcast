@@ -1,4 +1,4 @@
-use crate::models::Account;
+use crate::models::{Account, SessionConfig, SessionDetail};
 use anyhow::Result;
 use sqlx::{sqlite::SqlitePool, Row};
 use std::path::PathBuf;
@@ -102,6 +102,28 @@ impl Database {
         )
         .execute(&pool)
         .await?;
+
+        // 세션 설정 테이블 생성
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS session_config (
+                session_id TEXT PRIMARY KEY,
+                account_id TEXT NOT NULL,
+                model_override TEXT,
+                last_message TEXT,
+                created_at INTEGER NOT NULL,
+                last_activity_at INTEGER NOT NULL,
+                FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await?;
+
+        // 기존 테이블에 last_message 컬럼 추가 (마이그레이션)
+        let _ = sqlx::query("ALTER TABLE session_config ADD COLUMN last_message TEXT")
+            .execute(&pool)
+            .await;
 
         Ok(Self { pool })
     }
@@ -414,6 +436,151 @@ impl Database {
         .await?;
 
         Ok(rows)
+    }
+
+    // 특정 계정 조회
+    pub async fn get_account(&self, account_id: &str) -> Result<Option<Account>> {
+        let account = sqlx::query_as::<_, Account>(
+            "SELECT id, name, base_url, created_at, is_active FROM accounts WHERE id = ?"
+        )
+        .bind(account_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(account)
+    }
+
+    // ===== 세션 설정 관리 =====
+
+    // 세션 설정 조회
+    pub async fn get_session_config(&self, session_id: &str) -> Result<Option<SessionConfig>> {
+        let config = sqlx::query_as::<_, SessionConfig>(
+            "SELECT session_id, account_id, model_override, last_message, created_at, last_activity_at FROM session_config WHERE session_id = ?"
+        )
+        .bind(session_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(config)
+    }
+
+    // 세션 설정 생성/업데이트
+    pub async fn upsert_session_config(
+        &self,
+        session_id: &str,
+        account_id: &str,
+        model_override: Option<&str>,
+    ) -> Result<()> {
+        let now = chrono::Utc::now().timestamp();
+
+        sqlx::query(
+            r#"
+            INSERT INTO session_config (session_id, account_id, model_override, last_message, created_at, last_activity_at)
+            VALUES (?, ?, ?, NULL, ?, ?)
+            ON CONFLICT(session_id) DO UPDATE SET
+                account_id = excluded.account_id,
+                model_override = excluded.model_override,
+                last_activity_at = excluded.last_activity_at
+            "#,
+        )
+        .bind(session_id)
+        .bind(account_id)
+        .bind(model_override)
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    // 세션 활동 시간 및 마지막 메시지 업데이트
+    pub async fn update_session_activity(&self, session_id: &str, last_message: Option<&str>) -> Result<()> {
+        let now = chrono::Utc::now().timestamp();
+
+        if let Some(msg) = last_message {
+            // 메시지가 있으면 함께 업데이트
+            sqlx::query("UPDATE session_config SET last_activity_at = ?, last_message = ? WHERE session_id = ?")
+                .bind(now)
+                .bind(msg)
+                .bind(session_id)
+                .execute(&self.pool)
+                .await?;
+        } else {
+            // 메시지가 없으면 시간만 업데이트
+            sqlx::query("UPDATE session_config SET last_activity_at = ? WHERE session_id = ?")
+                .bind(now)
+                .bind(session_id)
+                .execute(&self.pool)
+                .await?;
+        }
+
+        Ok(())
+    }
+
+    // 활성 세션 목록 조회 (최근 24시간 + 사용량 통계 포함)
+    pub async fn get_active_sessions(&self) -> Result<Vec<SessionDetail>> {
+        let cutoff = chrono::Utc::now().timestamp() - (24 * 60 * 60); // 24시간 전
+
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                sc.session_id,
+                sc.account_id,
+                a.name as account_name,
+                sc.model_override,
+                sc.last_message,
+                sc.created_at,
+                sc.last_activity_at,
+                COALESCE(ul.request_count, 0) as request_count,
+                COALESCE(ul.total_input_tokens, 0) as total_input_tokens,
+                COALESCE(ul.total_output_tokens, 0) as total_output_tokens
+            FROM session_config sc
+            LEFT JOIN accounts a ON sc.account_id = a.id
+            LEFT JOIN (
+                SELECT
+                    session_id,
+                    COUNT(*) as request_count,
+                    SUM(input_tokens) as total_input_tokens,
+                    SUM(output_tokens) as total_output_tokens
+                FROM usage_logs
+                GROUP BY session_id
+            ) ul ON sc.session_id = ul.session_id
+            WHERE sc.last_activity_at > ?
+            ORDER BY sc.last_activity_at DESC
+            "#,
+        )
+        .bind(cutoff)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let sessions = rows
+            .iter()
+            .map(|row| SessionDetail {
+                session_id: row.try_get("session_id").unwrap_or_default(),
+                account_id: row.try_get("account_id").unwrap_or_default(),
+                account_name: row.try_get("account_name").unwrap_or_else(|_| "Unknown".to_string()),
+                model_override: row.try_get("model_override").ok(),
+                last_message: row.try_get("last_message").ok(),
+                created_at: row.try_get("created_at").unwrap_or(0),
+                last_activity_at: row.try_get("last_activity_at").unwrap_or(0),
+                request_count: row.try_get("request_count").unwrap_or(0),
+                total_input_tokens: row.try_get("total_input_tokens").unwrap_or(0),
+                total_output_tokens: row.try_get("total_output_tokens").unwrap_or(0),
+            })
+            .collect();
+
+        Ok(sessions)
+    }
+
+    // 세션 설정 삭제
+    pub async fn delete_session_config(&self, session_id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM session_config WHERE session_id = ?")
+            .bind(session_id)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
     }
 }
 

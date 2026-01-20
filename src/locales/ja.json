@@ -73,6 +73,24 @@
     "noData": "データなし",
     "sessionId": "セッションID"
   },
+  "sessions": {
+    "title": "セッション管理",
+    "activeSessions": "アクティブセッション",
+    "noSessions": "アクティブなセッションがありません",
+    "sessionId": "セッションID",
+    "vendor": "ベンダー",
+    "model": "モデル",
+    "keepOriginal": "元のまま",
+    "lastActivity": "最終アクティビティ",
+    "requests": "リクエスト",
+    "tokens": "トークン",
+    "delete": "削除",
+    "refresh": "更新",
+    "justNow": "たった今",
+    "minutesAgo": "{{minutes}}分前",
+    "hoursAgo": "{{hours}}時間前",
+    "confirmDelete": "このセッション設定を削除してもよろしいですか？"
+  },
   "settings": {
     "title": "設定",
     "proxyPort": "プロキシポート",

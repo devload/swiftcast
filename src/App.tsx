@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
 import Dashboard from './components/Dashboard';
 import AccountManager from './components/AccountManager';
+import SessionManager from './components/SessionManager';
 import UsageMonitor from './components/UsageMonitor';
 import Settings from './components/Settings';
 
@@ -79,6 +80,9 @@ function App() {
           <AccountManager
             onAccountChange={loadActiveAccount}
           />
+
+          {/* Session Manager */}
+          <SessionManager />
 
           {/* Usage Monitor */}
           <UsageMonitor />

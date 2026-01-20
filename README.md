@@ -1,109 +1,117 @@
 # SwiftCast
 
-**Claude Code의 AI Provider를 자유롭게 스위칭하고 사용량을 모니터링하는 데스크톱 앱**
+**A desktop app for seamlessly switching AI providers and monitoring usage for Claude Code**
 
 ![Dashboard](docs/01-dashboard.png)
 
-## 주요 기능
+## Key Features
 
-- **Provider 스위칭**: Anthropic (Claude) ↔ GLM 간 한 번의 클릭으로 전환
-- **사용량 모니터링**: 토큰 사용량을 세션별/모델별/일별로 추적
-- **프록시 자동 설정**: Claude Code의 settings.json을 자동으로 관리
-- **Auto Scan**: macOS Keychain에서 기존 Claude 인증 정보 자동 가져오기
+- **Provider Switching**: Switch between Anthropic (Claude) and GLM with a single click
+- **Usage Monitoring**: Track token usage by session, model, and day
+- **Auto Proxy Configuration**: Automatically manages Claude Code's settings.json
+- **Auto Scan**: Automatically imports existing Claude credentials from macOS Keychain
+- **Session Management**: Run multiple Claude Code instances with different vendors/models
 
-## 설치
+## Installation
 
 ### macOS
-1. [Releases](../../releases)에서 `.dmg` 파일 다운로드
-2. DMG 마운트 후 SwiftCast.app을 Applications 폴더로 이동
-3. 앱 실행
+1. Download the `.dmg` file from [Releases](../../releases)
+2. Mount the DMG and drag SwiftCast.app to Applications folder
+3. Launch the app
 
-### 직접 빌드
+### Build from Source
 ```bash
-# 의존성 설치
+# Install dependencies
 npm install
 
-# 개발 모드 실행
+# Run in development mode
 npm run tauri dev
 
-# 릴리스 빌드
+# Build for release
 npm run tauri build
 ```
 
-빌드 결과물:
+Build output:
 - `src-tauri/target/release/bundle/macos/SwiftCast.app`
 - `src-tauri/target/release/bundle/dmg/SwiftCast_x.x.x_aarch64.dmg`
 
 ---
 
-## 사용자 가이드
+## User Guide
 
-### 1. 계정 등록
+### 1. Account Registration
 
 ![Accounts](docs/02-accounts.png)
 
 #### Auto Scan (macOS)
-- **Auto Scan** 버튼 클릭
-- macOS Keychain에서 기존 Claude 인증 정보를 자동으로 가져옴
-- Anthropic Official 계정이 자동 등록됨
+- Click the **Auto Scan** button
+- Automatically imports existing Claude credentials from macOS Keychain
+- Anthropic Official account will be registered automatically
 
-#### 수동 등록
-1. **+ 계정 추가** 버튼 클릭
-2. 계정 이름 입력 (예: "My GLM Account")
-3. Base URL 선택:
+#### Manual Registration
+1. Click **+ Add Account** button
+2. Enter account name (e.g., "My GLM Account")
+3. Select Base URL:
    - `Anthropic (Claude)`: https://api.anthropic.com
    - `GLM (Z.AI)`: https://api.z.ai/api/anthropic
-4. API Key 입력
-5. **추가** 버튼 클릭
+4. Enter API Key
+5. Click **Add** button
 
-### 2. Provider 전환
+### 2. Switching Providers
 
-1. 계정 목록에서 사용할 계정의 **활성화** 버튼 클릭
-2. 프록시가 자동으로 해당 Provider로 전환됨
-3. Claude Code를 재시작하면 새 Provider 사용
+1. Click **Activate** button on the desired account in the list
+2. Proxy automatically switches to that provider
+3. Restart Claude Code to use the new provider
 
-### 3. 사용량 모니터링
+### 3. Usage Monitoring
 
 ![Usage](docs/03-usage.png)
 
-**개요 탭**:
-- 요청 수: Claude API 호출 횟수
-- 입력 토큰: 프롬프트에 사용된 토큰 (시스템 + 대화 히스토리 + 사용자 메시지)
-- 출력 토큰: Claude 응답에 사용된 토큰
+**Overview Tab**:
+- Request Count: Number of Claude API calls
+- Input Tokens: Tokens used in prompts (system + conversation history + user message)
+- Output Tokens: Tokens used in Claude's responses
 
-**다른 탭**:
-- 모델별: 각 모델(claude-sonnet-4, etc)별 사용량
-- 일별: 최근 7일간 일별 사용량
-- 세션별: Claude Code 세션별 사용량 (대화 단위)
-- 최근 로그: 개별 요청 기록
+**Other Tabs**:
+- By Model: Usage breakdown by model (claude-sonnet-4, etc)
+- Daily: Daily usage for the past 7 days
+- By Session: Usage per Claude Code session (per conversation)
+- Recent Logs: Individual request records
 
-### 4. 설정
+### 4. Session Management
+
+- Run multiple Claude Code instances simultaneously
+- Each session can use a different vendor (Anthropic/GLM) and model
+- View last message for easy session identification
+- Real-time session activity tracking
+
+### 5. Settings
 
 ![Settings](docs/04-settings.png)
 
-- **프록시 포트**: Claude Code가 연결할 로컬 프록시 포트 (기본: 32080)
-- **자동 시작**: 앱 실행 시 프록시 자동 시작
-- **Claude Code 설정 파일**: `~/.claude/settings.json` 자동 관리
-- **사용량 로그 초기화**: 모든 사용량 기록 삭제
+- **Proxy Port**: Local proxy port for Claude Code connection (default: 32080)
+- **Auto Start**: Automatically start proxy when app launches
+- **Claude Code Settings File**: Auto-manages `~/.claude/settings.json`
+- **Clear Usage Logs**: Delete all usage records
 
 ---
 
-## 작동 원리
+## How It Works
 
 ```
 Claude Code
-    ↓ (HTTP 요청)
+    ↓ (HTTP Request)
 SwiftCast Proxy (localhost:32080)
-    ↓ (활성 계정 확인)
-    ├─→ Anthropic API (OAuth 토큰 패스스루)
-    └─→ GLM API (저장된 API 키 사용)
-    ↓ (사용량 기록 - 토큰 추적)
+    ↓ (Check active account)
+    ├─→ Anthropic API (OAuth token passthrough)
+    └─→ GLM API (uses stored API key)
+    ↓ (Log usage - track tokens)
 Claude Code
 ```
 
-### Claude Code 연동
+### Claude Code Integration
 
-SwiftCast는 `~/.claude/settings.json`을 자동으로 관리합니다:
+SwiftCast automatically manages `~/.claude/settings.json`:
 
 ```json
 {
@@ -113,91 +121,97 @@ SwiftCast는 `~/.claude/settings.json`을 자동으로 관리합니다:
 }
 ```
 
-- 프록시 시작 시: settings.json 생성/업데이트
-- 프록시 중지 시: settings.json 삭제 (Claude Code가 직접 Anthropic API 사용)
-- 계정 전환 시: 자동 업데이트
+- Proxy start: Creates/updates settings.json
+- Proxy stop: Deletes settings.json (Claude Code uses Anthropic API directly)
+- Account switch: Auto-updates configuration
 
 ---
 
-## 기술 스택
+## Tech Stack
 
-| 구분 | 기술 |
-|------|------|
+| Component | Technology |
+|-----------|------------|
 | Frontend | React + TypeScript + Vite + TailwindCSS |
 | Backend | Rust (Tauri 2.x, axum, SQLite) |
-| 플랫폼 | macOS, Windows (크로스 플랫폼) |
+| Platform | macOS, Windows (cross-platform) |
 
-### 특징
-- 런타임 불필요 (JRE, Node.js 등 설치 불필요)
-- 작은 용량 (~10MB, Electron 대비 1/20)
-- 더블클릭으로 바로 실행
+### Highlights
+- No runtime required (no JRE, Node.js installation needed)
+- Small footprint (~10MB, 1/20th of Electron)
+- Double-click to run
 
 ---
 
-## 프로젝트 구조
+## Project Structure
 
 ```
 swiftcast/
 ├── src/                    # Frontend (React)
 │   ├── components/
-│   │   ├── Dashboard.tsx       # 메인 대시보드
-│   │   ├── AccountManager.tsx  # 계정 관리
-│   │   ├── UsageMonitor.tsx    # 사용량 모니터링
-│   │   └── Settings.tsx        # 설정
+│   │   ├── Dashboard.tsx       # Main dashboard
+│   │   ├── AccountManager.tsx  # Account management
+│   │   ├── SessionManager.tsx  # Session management
+│   │   ├── UsageMonitor.tsx    # Usage monitoring
+│   │   └── Settings.tsx        # Settings
 │   └── App.tsx
 │
 ├── src-tauri/             # Backend (Rust)
 │   ├── src/
-│   │   ├── proxy/         # 프록시 서버 (axum + SSE)
-│   │   ├── storage/       # 데이터베이스 (SQLite)
+│   │   ├── proxy/         # Proxy server (axum + SSE)
+│   │   ├── storage/       # Database (SQLite)
 │   │   ├── commands/      # Tauri commands
 │   │   └── main.rs
 │   └── Cargo.toml
 │
-└── docs/                  # 스크린샷
+└── docs/                  # Screenshots
 ```
 
 ---
 
-## 사용 시나리오
+## Use Cases
 
-### 시나리오 1: GLM으로 비용 절감
-1. GLM 계정 등록 (Z.AI API Key)
-2. GLM 활성화하여 사용
-3. 사용량 모니터링으로 토큰 소비 확인
+### Scenario 1: Cost Reduction with GLM
+1. Register GLM account (Z.AI API Key)
+2. Activate GLM for usage
+3. Monitor token consumption via usage dashboard
 
-### 시나리오 2: 멀티 Provider 운용
-1. Anthropic, GLM 계정 모두 등록
-2. 평소: 주력 Provider 사용
-3. 한도 도달 시: 다른 Provider로 전환
+### Scenario 2: Multi-Provider Operation
+1. Register both Anthropic and GLM accounts
+2. Normal usage: Use primary provider
+3. When limit reached: Switch to alternative provider
+
+### Scenario 3: Different Models per Session
+1. Run multiple Claude Code instances
+2. Assign different models to each session (e.g., Opus for complex tasks, Haiku for simple ones)
+3. Monitor usage per session
 
 ---
 
-## 개발
+## Development
 
-### 요구사항
+### Requirements
 - Node.js 18+
 - Rust 1.70+
 - macOS: Xcode Command Line Tools
 
-### 명령어
+### Commands
 ```bash
-# 개발 모드
+# Development mode
 npm run tauri dev
 
-# 빌드
+# Build
 npm run tauri build
 
-# 프론트엔드만 빌드
+# Frontend only build
 npm run build
 ```
 
 ---
 
-## 라이선스
+## License
 
 MIT License
 
-## 기여
+## Contributing
 
-Issues와 Pull Requests를 환영합니다!
+Issues and Pull Requests are welcome!
