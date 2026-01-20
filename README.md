@@ -2,7 +2,7 @@
 
 **A desktop app for seamlessly switching AI providers and monitoring usage for Claude Code**
 
-![Dashboard](docs/01-dashboard.png)
+![Overview](docs/00-overview.png)
 
 ## Key Features
 
@@ -65,7 +65,7 @@ Build output:
 
 ### 3. Usage Monitoring
 
-![Usage](docs/03-usage.png)
+![Usage](docs/04-usage.png)
 
 **Overview Tab**:
 - Request Count: Number of Claude API calls
@@ -80,6 +80,8 @@ Build output:
 
 ### 4. Session Management
 
+![Sessions](docs/03-sessions.png)
+
 - Run multiple Claude Code instances simultaneously
 - Each session can use a different vendor (Anthropic/GLM) and model
 - View last message for easy session identification
@@ -87,7 +89,7 @@ Build output:
 
 ### 5. Settings
 
-![Settings](docs/04-settings.png)
+![Settings](docs/05-settings.png)
 
 - **Proxy Port**: Local proxy port for Claude Code connection (default: 32080)
 - **Auto Start**: Automatically start proxy when app launches
