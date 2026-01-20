@@ -40,26 +40,30 @@ npm run tauri:build
 
 ### Claude Code 설정
 
-**파일**: `%APPDATA%\Claude\settings.json`
+**파일**:
+- macOS: `~/.claude/settings.json`
+- Windows: `%APPDATA%\Claude\settings.json`
 
 ```json
 {
   "env": {
-    "ANTHROPIC_BASE_URL": "http://localhost:8080"
+    "ANTHROPIC_BASE_URL": "http://localhost:32080"
   }
 }
 ```
+
+**참고**: Claude(Anthropic)로 전환 시 settings.json이 자동 삭제되어 공식 API를 직접 사용합니다.
 
 ### 전체 흐름
 
 ```
 Claude Code
     ↓ (HTTP 요청)
-SwiftCast Proxy (localhost:8080)
+SwiftCast Proxy (localhost:32080)
     ↓ (활성 계정 확인)
-    ├─→ Anthropic API
-    └─→ GLM API
-    ↓ (사용량 기록)
+    ├─→ Anthropic API (OAuth 토큰 패스스루)
+    └─→ GLM API (저장된 API 키 사용)
+    ↓ (사용량 기록 - 토큰 추적)
     ↓ (응답 전달)
 Claude Code
 ```
@@ -70,17 +74,18 @@ Claude Code
 swiftcast/
 ├── src/                    # Frontend (React)
 │   ├── components/
-│   │   ├── Dashboard.tsx
-│   │   ├── AccountManager.tsx
-│   │   └── UsageMonitor.tsx
+│   │   ├── Dashboard.tsx       # 메인 대시보드
+│   │   ├── AccountManager.tsx  # 계정 관리
+│   │   ├── UsageMonitor.tsx    # 사용량 모니터링 (탭: 개요/모델별/일별/로그)
+│   │   └── Settings.tsx        # 설정 (포트, 자동시작)
 │   ├── App.tsx
 │   └── main.tsx
 │
 ├── src-tauri/             # Backend (Rust)
 │   ├── src/
 │   │   ├── models/        # 데이터 모델
-│   │   ├── storage/       # 데이터베이스
-│   │   ├── proxy/         # 프록시 서버
+│   │   ├── storage/       # 데이터베이스 (SQLite)
+│   │   ├── proxy/         # 프록시 서버 (axum + SSE)
 │   │   ├── commands/      # Tauri commands
 │   │   └── main.rs
 │   └── Cargo.toml
@@ -127,7 +132,7 @@ cargo run --example add_account "Account Name" "https://api.example.com" "api-ke
 ### 프록시 테스트
 
 ```bash
-curl -X POST http://localhost:8080/v1/messages \
+curl -X POST http://localhost:32080/v1/messages \
   -H "Content-Type: application/json" \
   -d '{
     "model": "claude-sonnet-4-5-20250929",

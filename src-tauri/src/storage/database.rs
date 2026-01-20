@@ -49,12 +49,18 @@ impl Database {
                 request_path TEXT,
                 status_code INTEGER NOT NULL,
                 error_message TEXT,
+                session_id TEXT,
                 FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
             )
             "#,
         )
         .execute(&pool)
         .await?;
+
+        // 기존 테이블에 session_id 컬럼 추가 (마이그레이션)
+        let _ = sqlx::query("ALTER TABLE usage_logs ADD COLUMN session_id TEXT")
+            .execute(&pool)
+            .await;
 
         sqlx::query(
             r#"
@@ -226,13 +232,14 @@ impl Database {
         model: &str,
         input_tokens: i64,
         output_tokens: i64,
+        session_id: Option<&str>,
     ) -> Result<()> {
         let timestamp = chrono::Utc::now().timestamp();
 
         sqlx::query(
             r#"
-            INSERT INTO usage_logs (timestamp, account_id, model, input_tokens, output_tokens, cost_usd, duration_ms, status_code)
-            VALUES (?, ?, ?, ?, ?, 0, 0, 200)
+            INSERT INTO usage_logs (timestamp, account_id, model, input_tokens, output_tokens, cost_usd, duration_ms, status_code, session_id)
+            VALUES (?, ?, ?, ?, ?, 0, 0, 200, ?)
             "#,
         )
         .bind(timestamp)
@@ -240,6 +247,7 @@ impl Database {
         .bind(model)
         .bind(input_tokens)
         .bind(output_tokens)
+        .bind(session_id)
         .execute(&self.pool)
         .await?;
 
@@ -298,4 +306,162 @@ impl Database {
         let auto_start = self.get_config("auto_start").await?.unwrap_or_else(|| "true".to_string());
         Ok(auto_start == "true")
     }
+
+    // 최근 사용량 로그 조회
+    pub async fn get_recent_usage(&self, limit: i64) -> Result<Vec<UsageLog>> {
+        let rows = sqlx::query_as::<_, UsageLog>(
+            r#"
+            SELECT id, timestamp, account_id, model, input_tokens, output_tokens, cost_usd, duration_ms, status_code, session_id
+            FROM usage_logs
+            ORDER BY timestamp DESC
+            LIMIT ?
+            "#,
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows)
+    }
+
+    // 계정별 사용량 통계
+    pub async fn get_usage_by_account(&self) -> Result<Vec<AccountUsageStats>> {
+        let rows = sqlx::query_as::<_, AccountUsageStats>(
+            r#"
+            SELECT
+                account_id,
+                COUNT(*) as request_count,
+                COALESCE(SUM(input_tokens), 0) as total_input_tokens,
+                COALESCE(SUM(output_tokens), 0) as total_output_tokens
+            FROM usage_logs
+            GROUP BY account_id
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows)
+    }
+
+    // 모델별 사용량 통계
+    pub async fn get_usage_by_model(&self) -> Result<Vec<ModelUsageStats>> {
+        let rows = sqlx::query_as::<_, ModelUsageStats>(
+            r#"
+            SELECT
+                model,
+                COUNT(*) as request_count,
+                COALESCE(SUM(input_tokens), 0) as total_input_tokens,
+                COALESCE(SUM(output_tokens), 0) as total_output_tokens
+            FROM usage_logs
+            GROUP BY model
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows)
+    }
+
+    // 일별 사용량 통계 (최근 N일)
+    pub async fn get_daily_usage(&self, days: i64) -> Result<Vec<DailyUsageStats>> {
+        let rows = sqlx::query_as::<_, DailyUsageStats>(
+            r#"
+            SELECT
+                date(timestamp, 'unixepoch', 'localtime') as date,
+                COUNT(*) as request_count,
+                COALESCE(SUM(input_tokens), 0) as total_input_tokens,
+                COALESCE(SUM(output_tokens), 0) as total_output_tokens
+            FROM usage_logs
+            WHERE timestamp > unixepoch() - (? * 86400)
+            GROUP BY date
+            ORDER BY date DESC
+            "#,
+        )
+        .bind(days)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows)
+    }
+
+    // 사용량 로그 초기화
+    pub async fn clear_usage_logs(&self) -> Result<()> {
+        sqlx::query("DELETE FROM usage_logs")
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    // 세션별 사용량 통계
+    pub async fn get_usage_by_session(&self) -> Result<Vec<SessionUsageStats>> {
+        let rows = sqlx::query_as::<_, SessionUsageStats>(
+            r#"
+            SELECT
+                COALESCE(session_id, 'unknown') as session_id,
+                MIN(timestamp) as first_request,
+                MAX(timestamp) as last_request,
+                COUNT(*) as request_count,
+                COALESCE(SUM(input_tokens), 0) as total_input_tokens,
+                COALESCE(SUM(output_tokens), 0) as total_output_tokens
+            FROM usage_logs
+            WHERE session_id IS NOT NULL
+            GROUP BY session_id
+            ORDER BY last_request DESC
+            LIMIT 50
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows)
+    }
+}
+
+// 사용량 로그 모델
+#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize)]
+pub struct UsageLog {
+    pub id: i64,
+    pub timestamp: i64,
+    pub account_id: String,
+    pub model: String,
+    pub input_tokens: i64,
+    pub output_tokens: i64,
+    pub cost_usd: f64,
+    pub duration_ms: i64,
+    pub status_code: i64,
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize)]
+pub struct AccountUsageStats {
+    pub account_id: String,
+    pub request_count: i64,
+    pub total_input_tokens: i64,
+    pub total_output_tokens: i64,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize)]
+pub struct ModelUsageStats {
+    pub model: String,
+    pub request_count: i64,
+    pub total_input_tokens: i64,
+    pub total_output_tokens: i64,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize)]
+pub struct DailyUsageStats {
+    pub date: String,
+    pub request_count: i64,
+    pub total_input_tokens: i64,
+    pub total_output_tokens: i64,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize)]
+pub struct SessionUsageStats {
+    pub session_id: String,
+    pub first_request: i64,
+    pub last_request: i64,
+    pub request_count: i64,
+    pub total_input_tokens: i64,
+    pub total_output_tokens: i64,
 }

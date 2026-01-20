@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import Dashboard from './components/Dashboard';
 import AccountManager from './components/AccountManager';
 import UsageMonitor from './components/UsageMonitor';
+import Settings from './components/Settings';
 
 function App() {
   const [proxyRunning, setProxyRunning] = useState(false);
@@ -79,6 +80,9 @@ function App() {
 
           {/* Usage Monitor */}
           <UsageMonitor />
+
+          {/* Settings */}
+          <Settings />
         </div>
       </main>
     </div>

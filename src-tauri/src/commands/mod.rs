@@ -80,55 +80,64 @@ pub async fn switch_account(
     Ok(())
 }
 
-// Claude settings.json 업데이트
-fn update_claude_settings(base_url: &str, proxy_port: u16) -> Result<(), String> {
+// 앱 시작 시 Claude settings.json 초기화 (main.rs에서 호출)
+pub fn init_claude_settings(base_url: &str, proxy_port: u16) -> Result<(), String> {
+    update_claude_settings(base_url, proxy_port)
+}
+
+// 프록시 중지 시 settings.json에서 프록시 설정 제거
+fn clear_claude_settings() -> Result<(), String> {
     use std::fs;
 
     let settings_path = get_claude_settings_path()?;
 
-    // Anthropic 공식 API인 경우 settings.json 삭제 (기본 동작으로 복원)
-    if base_url.contains("api.anthropic.com") {
-        if settings_path.exists() {
-            // env 섹션만 제거하고 나머지는 유지
-            if let Ok(content) = fs::read_to_string(&settings_path) {
-                if let Ok(mut settings) = serde_json::from_str::<serde_json::Value>(&content) {
-                    if let Some(obj) = settings.as_object_mut() {
-                        // ANTHROPIC_BASE_URL과 ANTHROPIC_AUTH_TOKEN만 제거
-                        if let Some(env) = obj.get_mut("env").and_then(|e| e.as_object_mut()) {
-                            env.remove("ANTHROPIC_BASE_URL");
-                            env.remove("ANTHROPIC_AUTH_TOKEN");
-
-                            // env가 비어있으면 env 자체를 제거
-                            if env.is_empty() {
-                                obj.remove("env");
-                            }
-                        }
-
-                        // 파일이 비어있으면 삭제, 아니면 업데이트
-                        if obj.is_empty() {
-                            fs::remove_file(&settings_path)
-                                .map_err(|e| format!("Failed to delete settings.json: {}", e))?;
-                            tracing::info!("Deleted Claude settings.json for direct Anthropic connection");
-                        } else {
-                            let settings_json = serde_json::to_string_pretty(&settings)
-                                .map_err(|e| format!("Failed to serialize settings: {}", e))?;
-                            fs::write(&settings_path, settings_json)
-                                .map_err(|e| format!("Failed to write settings.json: {}", e))?;
-                            tracing::info!("Removed proxy settings from settings.json");
-                        }
-                        return Ok(());
-                    }
-                }
-            }
-            // 파싱 실패시 파일 삭제
-            fs::remove_file(&settings_path)
-                .map_err(|e| format!("Failed to delete settings.json: {}", e))?;
-            tracing::info!("Deleted Claude settings.json for direct Anthropic connection");
-        }
+    if !settings_path.exists() {
         return Ok(());
     }
 
-    // 프록시 사용시 settings.json에 로컬 프록시 URL 설정
+    // 기존 설정 읽기
+    let content = fs::read_to_string(&settings_path)
+        .map_err(|e| format!("Failed to read settings.json: {}", e))?;
+
+    if let Ok(mut settings) = serde_json::from_str::<serde_json::Value>(&content) {
+        if let Some(obj) = settings.as_object_mut() {
+            // env에서 ANTHROPIC_BASE_URL 제거
+            if let Some(env) = obj.get_mut("env").and_then(|e| e.as_object_mut()) {
+                env.remove("ANTHROPIC_BASE_URL");
+
+                // env가 비어있으면 env 자체 제거
+                if env.is_empty() {
+                    obj.remove("env");
+                }
+            }
+
+            // 파일이 비어있으면 삭제, 아니면 업데이트
+            if obj.is_empty() {
+                fs::remove_file(&settings_path)
+                    .map_err(|e| format!("Failed to delete settings.json: {}", e))?;
+            } else {
+                let settings_json = serde_json::to_string_pretty(&settings)
+                    .map_err(|e| format!("Failed to serialize settings: {}", e))?;
+                fs::write(&settings_path, settings_json)
+                    .map_err(|e| format!("Failed to write settings.json: {}", e))?;
+            }
+        }
+    } else {
+        // 파싱 실패시 파일 삭제
+        fs::remove_file(&settings_path)
+            .map_err(|e| format!("Failed to delete settings.json: {}", e))?;
+    }
+
+    Ok(())
+}
+
+// Claude settings.json 업데이트 - 항상 프록시 URL 설정 (사용량 추적을 위해)
+fn update_claude_settings(_base_url: &str, proxy_port: u16) -> Result<(), String> {
+    use std::fs;
+
+    let settings_path = get_claude_settings_path()?;
+
+    // 프록시 URL 설정 (Anthropic이든 GLM이든 모두 프록시를 통해 사용량 추적)
     let proxy_url = format!("http://localhost:{}", proxy_port);
 
     let mut settings: serde_json::Value = if settings_path.exists() {
@@ -161,7 +170,7 @@ fn update_claude_settings(base_url: &str, proxy_port: u16) -> Result<(), String>
     fs::write(&settings_path, settings_json)
         .map_err(|e| format!("Failed to write settings.json: {}", e))?;
 
-    tracing::info!("Updated Claude settings.json with proxy_url: {} (target: {})", proxy_url, base_url);
+    tracing::info!("Updated Claude settings.json with proxy_url: {}", proxy_url);
 
     Ok(())
 }
@@ -196,6 +205,12 @@ pub async fn start_proxy(port: u16, state: State<'_, AppState>) -> Result<(), St
     server.start(port).await.map_err(|e| e.to_string())?;
     *proxy = Some(server);
 
+    // 프록시 시작 시 활성 계정에 따라 settings.json 업데이트
+    if let Ok(Some(account)) = state.db.get_active_account().await {
+        init_claude_settings(&account.base_url, port)?;
+        tracing::info!("Updated Claude settings.json for proxy");
+    }
+
     Ok(())
 }
 
@@ -206,6 +221,10 @@ pub async fn stop_proxy(state: State<'_, AppState>) -> Result<(), String> {
     if let Some(mut server) = proxy.take() {
         server.stop().await.map_err(|e| e.to_string())?;
     }
+
+    // 프록시 중지 시 settings.json 정리 (Claude Code가 직접 연결하도록)
+    clear_claude_settings()?;
+    tracing::info!("Cleared Claude settings.json - Claude Code will use direct connection");
 
     Ok(())
 }
@@ -479,9 +498,9 @@ pub async fn get_app_config(state: State<'_, AppState>) -> Result<AppConfig, Str
 
 #[tauri::command]
 pub async fn set_proxy_port(port: u16, state: State<'_, AppState>) -> Result<(), String> {
-    // 유효한 포트 범위 확인 (1024-65535)
-    if port < 1024 || port > 65535 {
-        return Err("포트는 1024-65535 범위여야 합니다".to_string());
+    // 유효한 포트 범위 확인 (1024 이상, u16이므로 최대 65535)
+    if port < 1024 {
+        return Err("포트는 1024 이상이어야 합니다".to_string());
     }
 
     state.db.set_config("proxy_port", &port.to_string()).await.map_err(|e| e.to_string())?;
@@ -499,4 +518,37 @@ pub async fn set_auto_start(enabled: bool, state: State<'_, AppState>) -> Result
 #[tauri::command]
 pub async fn get_proxy_port(state: State<'_, AppState>) -> Result<u16, String> {
     state.db.get_proxy_port().await.map_err(|e| e.to_string())
+}
+
+// 사용량 관련 명령어
+use crate::storage::database::{UsageLog, AccountUsageStats, ModelUsageStats, DailyUsageStats, SessionUsageStats};
+
+#[tauri::command]
+pub async fn get_recent_usage(limit: i64, state: State<'_, AppState>) -> Result<Vec<UsageLog>, String> {
+    state.db.get_recent_usage(limit).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_usage_by_account(state: State<'_, AppState>) -> Result<Vec<AccountUsageStats>, String> {
+    state.db.get_usage_by_account().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_usage_by_model(state: State<'_, AppState>) -> Result<Vec<ModelUsageStats>, String> {
+    state.db.get_usage_by_model().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_daily_usage(days: i64, state: State<'_, AppState>) -> Result<Vec<DailyUsageStats>, String> {
+    state.db.get_daily_usage(days).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn clear_usage_logs(state: State<'_, AppState>) -> Result<(), String> {
+    state.db.clear_usage_logs().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_usage_by_session(state: State<'_, AppState>) -> Result<Vec<SessionUsageStats>, String> {
+    state.db.get_usage_by_session().await.map_err(|e| e.to_string())
 }
