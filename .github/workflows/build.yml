@@ -67,10 +67,13 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
+      - name: Setup MSVC
+        uses: TheMrMilchworker/setup-msvc-dev@v3
+        with:
+          arch: x64
+
       - name: Install Rust stable
-        run: |
-          rustup default stable-msvc
-          rustup target add x86_64-pc-windows-msvc
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
