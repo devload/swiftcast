@@ -1,7 +1,14 @@
 use crate::models::{Account, SessionConfig, SessionDetail};
 use anyhow::Result;
-use sqlx::{sqlite::SqlitePool, Row};
+use sqlx::{sqlite::{SqlitePool, SqlitePoolOptions}, Row};
 use std::path::PathBuf;
+use std::time::Duration;
+
+// DB 설정 상수
+const DB_MAX_CONNECTIONS: u32 = 5;
+const DB_ACQUIRE_TIMEOUT_SECS: u64 = 30;
+const SESSION_RETENTION_DAYS: i64 = 90; // 세션 보존 기간
+const USAGE_LOG_RETENTION_DAYS: i64 = 365; // 사용량 로그 보존 기간 (1년)
 
 pub struct Database {
     pool: SqlitePool,
@@ -17,8 +24,12 @@ impl Database {
         // Use absolute path with sqlite: prefix
         let db_url = format!("sqlite:{}", db_path.to_str().unwrap());
 
-        // 연결 풀 생성
-        let pool = SqlitePool::connect(&db_url).await?;
+        // 연결 풀 생성 (최대 연결 수 및 타임아웃 설정)
+        let pool = SqlitePoolOptions::new()
+            .max_connections(DB_MAX_CONNECTIONS)
+            .acquire_timeout(Duration::from_secs(DB_ACQUIRE_TIMEOUT_SECS))
+            .connect(&db_url)
+            .await?;
 
         // 테이블 생성
         sqlx::query(
@@ -125,7 +136,25 @@ impl Database {
             .execute(&pool)
             .await;
 
-        Ok(Self { pool })
+        // 인덱스 생성 (성능 최적화)
+        let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_usage_logs_timestamp ON usage_logs(timestamp)")
+            .execute(&pool)
+            .await;
+        let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_usage_logs_session_id ON usage_logs(session_id)")
+            .execute(&pool)
+            .await;
+        let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_usage_logs_account_id ON usage_logs(account_id)")
+            .execute(&pool)
+            .await;
+        let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_session_config_last_activity ON session_config(last_activity_at)")
+            .execute(&pool)
+            .await;
+
+        // 오래된 데이터 자동 정리
+        let db = Self { pool };
+        db.cleanup_old_data().await?;
+
+        Ok(db)
     }
 
     fn get_app_data_dir() -> Result<PathBuf> {
@@ -346,7 +375,7 @@ impl Database {
         Ok(rows)
     }
 
-    // 계정별 사용량 통계
+    // 계정별 사용량 통계 (최대 100개)
     pub async fn get_usage_by_account(&self) -> Result<Vec<AccountUsageStats>> {
         let rows = sqlx::query_as::<_, AccountUsageStats>(
             r#"
@@ -357,6 +386,8 @@ impl Database {
                 COALESCE(SUM(output_tokens), 0) as total_output_tokens
             FROM usage_logs
             GROUP BY account_id
+            ORDER BY request_count DESC
+            LIMIT 100
             "#,
         )
         .fetch_all(&self.pool)
@@ -365,7 +396,7 @@ impl Database {
         Ok(rows)
     }
 
-    // 모델별 사용량 통계
+    // 모델별 사용량 통계 (최대 50개)
     pub async fn get_usage_by_model(&self) -> Result<Vec<ModelUsageStats>> {
         let rows = sqlx::query_as::<_, ModelUsageStats>(
             r#"
@@ -376,6 +407,8 @@ impl Database {
                 COALESCE(SUM(output_tokens), 0) as total_output_tokens
             FROM usage_logs
             GROUP BY model
+            ORDER BY request_count DESC
+            LIMIT 50
             "#,
         )
         .fetch_all(&self.pool)
@@ -548,6 +581,7 @@ impl Database {
             ) ul ON sc.session_id = ul.session_id
             WHERE sc.last_activity_at > ?
             ORDER BY sc.last_activity_at DESC
+            LIMIT 100
             "#,
         )
         .bind(cutoff)
@@ -581,6 +615,74 @@ impl Database {
             .await?;
 
         Ok(())
+    }
+
+    // ===== 데이터 정리 (OOM 방지) =====
+
+    /// 오래된 데이터 자동 정리 (앱 시작 시 실행)
+    pub async fn cleanup_old_data(&self) -> Result<()> {
+        let now = chrono::Utc::now().timestamp();
+
+        // 1. 오래된 세션 삭제 (90일 이상)
+        let session_cutoff = now - (SESSION_RETENTION_DAYS * 24 * 60 * 60);
+        let deleted_sessions = sqlx::query("DELETE FROM session_config WHERE last_activity_at < ?")
+            .bind(session_cutoff)
+            .execute(&self.pool)
+            .await?;
+
+        if deleted_sessions.rows_affected() > 0 {
+            tracing::info!(
+                "Cleaned up {} old sessions (older than {} days)",
+                deleted_sessions.rows_affected(),
+                SESSION_RETENTION_DAYS
+            );
+        }
+
+        // 2. 오래된 사용량 로그 삭제 (1년 이상)
+        let usage_cutoff = now - (USAGE_LOG_RETENTION_DAYS * 24 * 60 * 60);
+        let deleted_logs = sqlx::query("DELETE FROM usage_logs WHERE timestamp < ?")
+            .bind(usage_cutoff)
+            .execute(&self.pool)
+            .await?;
+
+        if deleted_logs.rows_affected() > 0 {
+            tracing::info!(
+                "Cleaned up {} old usage logs (older than {} days)",
+                deleted_logs.rows_affected(),
+                USAGE_LOG_RETENTION_DAYS
+            );
+        }
+
+        // 3. DB 최적화 (VACUUM) - 삭제된 데이터 공간 회수
+        if deleted_sessions.rows_affected() > 100 || deleted_logs.rows_affected() > 1000 {
+            tracing::info!("Running VACUUM to reclaim disk space...");
+            let _ = sqlx::query("VACUUM").execute(&self.pool).await;
+        }
+
+        Ok(())
+    }
+
+    /// 수동 데이터 정리 (사용자 요청 시)
+    pub async fn manual_cleanup(&self, days_to_keep: i64) -> Result<(u64, u64)> {
+        let now = chrono::Utc::now().timestamp();
+        let cutoff = now - (days_to_keep * 24 * 60 * 60);
+
+        // 세션 삭제
+        let deleted_sessions = sqlx::query("DELETE FROM session_config WHERE last_activity_at < ?")
+            .bind(cutoff)
+            .execute(&self.pool)
+            .await?;
+
+        // 사용량 로그 삭제
+        let deleted_logs = sqlx::query("DELETE FROM usage_logs WHERE timestamp < ?")
+            .bind(cutoff)
+            .execute(&self.pool)
+            .await?;
+
+        // VACUUM 실행
+        let _ = sqlx::query("VACUUM").execute(&self.pool).await;
+
+        Ok((deleted_sessions.rows_affected(), deleted_logs.rows_affected()))
     }
 }
 

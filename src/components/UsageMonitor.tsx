@@ -69,9 +69,10 @@ export default function UsageMonitor() {
   useEffect(() => {
     loadStats();
 
+    // 10초마다 업데이트 (사용량 통계는 실시간 필요 없음, OOM 방지)
     const interval = setInterval(() => {
       loadStats();
-    }, 2000);
+    }, 10000);
 
     return () => clearInterval(interval);
   }, []);

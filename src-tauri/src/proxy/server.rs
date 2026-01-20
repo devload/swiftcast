@@ -11,7 +11,13 @@ use axum::{
 use futures::StreamExt;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tokio::sync::Semaphore;
 use tower_http::cors::CorsLayer;
+
+// 상수 정의
+const MAX_REQUEST_BODY_SIZE: usize = 100 * 1024 * 1024; // 100MB
+const MAX_CONCURRENT_DB_TASKS: usize = 10; // 동시 DB 작업 제한
+const REQUEST_TIMEOUT_SECS: u64 = 300; // API 요청 타임아웃 (5분)
 
 // 요청에서 모델 및 마지막 메시지 정보 추출
 #[derive(Debug, Clone, Default)]
@@ -173,13 +179,21 @@ pub struct ProxyServer {
 struct ProxyState {
     db: Arc<Database>,
     client: reqwest::Client,
+    db_task_semaphore: Arc<Semaphore>, // DB 작업 동시 실행 제한
 }
 
 impl ProxyServer {
     pub fn new(db: Arc<Database>) -> Self {
+        // 타임아웃이 설정된 HTTP 클라이언트 생성
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(REQUEST_TIMEOUT_SECS))
+            .connect_timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+
         Self {
             db,
-            client: reqwest::Client::new(),
+            client,
             shutdown_tx: None,
         }
     }
@@ -191,6 +205,7 @@ impl ProxyServer {
         let state = ProxyState {
             db: self.db.clone(),
             client: self.client.clone(),
+            db_task_semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT_DB_TASKS)),
         };
 
         let app = Router::new()
@@ -243,10 +258,13 @@ async fn proxy_handler(
     // 원본 헤더 저장
     let original_headers = req.headers().clone();
 
-    // 요청 바디 읽기
-    let body_bytes = axum::body::to_bytes(req.into_body(), usize::MAX)
+    // 요청 바디 읽기 (최대 100MB 제한)
+    let body_bytes = axum::body::to_bytes(req.into_body(), MAX_REQUEST_BODY_SIZE)
         .await
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
+        .map_err(|e| {
+            tracing::error!("Failed to read request body (may exceed {}MB limit): {}", MAX_REQUEST_BODY_SIZE / 1024 / 1024, e);
+            StatusCode::PAYLOAD_TOO_LARGE
+        })?;
 
     // 세션 ID 추출 (sentry-trace 또는 baggage에서 trace_id 추출)
     let session_id = original_headers
@@ -443,6 +461,7 @@ async fn proxy_handler(
     let model = request_info.model.clone();
     let db = state.db.clone();
     let session_id_for_log = session_id.clone();
+    let semaphore = state.db_task_semaphore.clone();
 
     let body_stream = response.bytes_stream();
 
@@ -458,12 +477,25 @@ async fn proxy_handler(
                         usage.output_tokens
                     );
 
-                    // DB에 사용량 로깅 (비동기로 처리)
+                    // DB에 사용량 로깅 (비동기로 처리, Semaphore로 동시 실행 제한)
                     let db_clone = db.clone();
                     let account_id_clone = account_id.clone();
                     let model_clone = model.clone();
                     let session_id_clone = session_id_for_log.clone();
+                    let sem = semaphore.clone();
+
                     tokio::spawn(async move {
+                        // Semaphore permit 획득 시도 (논블로킹)
+                        // permit 획득 실패 시 로깅만 스킵하고 서비스는 정상 진행
+                        let _permit = match sem.try_acquire() {
+                            Ok(permit) => permit,
+                            Err(_) => {
+                                // 동시 DB 작업이 너무 많음 - 로깅 스킵 (서비스 우선)
+                                tracing::debug!("Too many concurrent DB tasks, skipping usage log");
+                                return;
+                            }
+                        };
+
                         if let Err(e) = db_clone
                             .log_usage(
                                 &account_id_clone,

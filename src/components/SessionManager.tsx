@@ -37,7 +37,8 @@ export default function SessionManager() {
 
   useEffect(() => {
     loadData();
-    const interval = setInterval(loadData, 3000);
+    // 5초마다 업데이트 (OOM 방지)
+    const interval = setInterval(loadData, 5000);
     return () => clearInterval(interval);
   }, []);
 

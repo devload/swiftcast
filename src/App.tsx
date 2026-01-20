@@ -16,11 +16,11 @@ function App() {
     checkProxyStatus();
     loadActiveAccount();
 
-    // 자동 업데이트: 2초마다 상태 확인
+    // 자동 업데이트: 5초마다 상태 확인 (OOM 방지)
     const interval = setInterval(() => {
       checkProxyStatus();
       loadActiveAccount();
-    }, 2000);
+    }, 5000);
 
     return () => clearInterval(interval);
   }, []);

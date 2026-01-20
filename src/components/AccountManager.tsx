@@ -29,9 +29,10 @@ export default function AccountManager({ onAccountChange }: AccountManagerProps)
   useEffect(() => {
     loadAccounts();
 
+    // 5초마다 업데이트 (OOM 방지)
     const interval = setInterval(() => {
       loadAccounts();
-    }, 2000);
+    }, 5000);
 
     return () => clearInterval(interval);
   }, []);
