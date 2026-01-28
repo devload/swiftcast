@@ -35,6 +35,7 @@ struct RequestInfo {
 struct UsageInfo {
     input_tokens: i64,
     output_tokens: i64,
+    stop_reason: Option<String>,
 }
 
 fn parse_request_info(body: &[u8]) -> RequestInfo {
@@ -149,20 +150,33 @@ fn parse_usage_from_sse(data: &str) -> Option<UsageInfo> {
         if line.starts_with("data: ") {
             let json_str = &line[6..];
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(json_str) {
-                // message_delta의 usage 또는 최종 usage
-                if let Some(usage) = json.get("usage") {
-                    return Some(UsageInfo {
-                        input_tokens: usage.get("input_tokens").and_then(|v| v.as_i64()).unwrap_or(0),
-                        output_tokens: usage.get("output_tokens").and_then(|v| v.as_i64()).unwrap_or(0),
-                    });
+                // message_delta 이벤트: stop_reason과 usage 모두 포함
+                if json.get("type").and_then(|v| v.as_str()) == Some("message_delta") {
+                    let stop_reason = json.get("delta")
+                        .and_then(|d| d.get("stop_reason"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+
+                    if let Some(usage) = json.get("usage") {
+                        return Some(UsageInfo {
+                            input_tokens: usage.get("input_tokens").and_then(|v| v.as_i64()).unwrap_or(0),
+                            output_tokens: usage.get("output_tokens").and_then(|v| v.as_i64()).unwrap_or(0),
+                            stop_reason,
+                        });
+                    }
                 }
                 // message_stop 이벤트의 amazon/anthropic 형식
                 if json.get("type").and_then(|v| v.as_str()) == Some("message_stop") {
                     if let Some(message) = json.get("message") {
+                        let stop_reason = message.get("stop_reason")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+
                         if let Some(usage) = message.get("usage") {
                             return Some(UsageInfo {
                                 input_tokens: usage.get("input_tokens").and_then(|v| v.as_i64()).unwrap_or(0),
                                 output_tokens: usage.get("output_tokens").and_then(|v| v.as_i64()).unwrap_or(0),
+                                stop_reason,
                             });
                         }
                     }
@@ -760,17 +774,22 @@ async fn proxy_handler(
 
                 if let Some(usage) = parse_usage_from_sse(text) {
                     tracing::info!(
-                        "USAGE: in={}, out={}",
+                        "USAGE: in={}, out={}, stop_reason={:?}",
                         usage.input_tokens,
-                        usage.output_tokens
+                        usage.output_tokens,
+                        usage.stop_reason
                     );
 
-                    // Update response builder with token counts
+                    // Update response builder with token counts and stop_reason
                     let rb = response_builder_for_stream.clone();
                     let input = usage.input_tokens;
                     let output = usage.output_tokens;
+                    let stop_reason = usage.stop_reason.clone();
                     tokio::spawn(async move {
                         rb.set_tokens(input, output).await;
+                        if let Some(reason) = stop_reason {
+                            rb.set_stop_reason(reason).await;
+                        }
                     });
 
                     // DB에 사용량 로깅 (비동기로 처리, Semaphore로 동시 실행 제한)

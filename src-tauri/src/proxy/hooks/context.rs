@@ -71,6 +71,8 @@ pub struct ResponseContext {
     pub response_text: String,
     /// Response timestamp (Unix epoch seconds)
     pub timestamp: i64,
+    /// Stop reason (end_turn, tool_use, max_tokens, etc.)
+    pub stop_reason: Option<String>,
 }
 
 impl ResponseContext {
@@ -115,6 +117,7 @@ struct ResponseBuilderInner {
     output_tokens: i64,
     response_text: String,
     error_message: Option<String>,
+    stop_reason: Option<String>,
 }
 
 impl ResponseBuilder {
@@ -144,6 +147,11 @@ impl ResponseBuilder {
         inner.error_message = Some(msg);
     }
 
+    pub async fn set_stop_reason(&self, reason: String) {
+        let mut inner = self.inner.write().await;
+        inner.stop_reason = Some(reason);
+    }
+
     pub async fn build(&self) -> ResponseContext {
         let inner = self.inner.read().await;
         let duration_ms = inner.start_time
@@ -159,6 +167,7 @@ impl ResponseBuilder {
             error_message: inner.error_message.clone(),
             response_text: inner.response_text.clone(),
             timestamp: chrono::Utc::now().timestamp(),
+            stop_reason: inner.stop_reason.clone(),
         }
     }
 }
@@ -192,6 +201,7 @@ pub struct ResponseLogData {
     pub is_success: bool,
     pub error_message: Option<String>,
     pub response_text: String,
+    pub stop_reason: Option<String>,
 }
 
 impl HookLogEntry {
@@ -216,6 +226,7 @@ impl HookLogEntry {
                 is_success: res.is_success,
                 error_message: res.error_message.clone(),
                 response_text: res.response_text.clone(),
+                stop_reason: res.stop_reason.clone(),
             },
         }
     }
