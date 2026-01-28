@@ -90,7 +90,11 @@ impl Database {
             INSERT OR IGNORE INTO config (key, value) VALUES
                 ('proxy_port', '32080'),
                 ('auto_start', 'true'),
-                ('theme', 'system')
+                ('theme', 'system'),
+                ('threadcast_webhook_url', 'http://localhost:21000'),
+                ('threadcast_webhook_enabled', 'false'),
+                ('hooks_enabled', 'true'),
+                ('hooks_retention_days', '30')
             "#,
         )
         .execute(&pool)
@@ -147,6 +151,25 @@ impl Database {
             .execute(&pool)
             .await;
         let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_session_config_last_activity ON session_config(last_activity_at)")
+            .execute(&pool)
+            .await;
+
+        // ThreadCast 매핑 테이블 생성
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS threadcast_mapping (
+                session_id TEXT PRIMARY KEY,
+                todo_id TEXT NOT NULL,
+                mission_id TEXT,
+                created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await?;
+
+        // ThreadCast 매핑 인덱스
+        let _ = sqlx::query("CREATE INDEX IF NOT EXISTS idx_threadcast_mapping_todo_id ON threadcast_mapping(todo_id)")
             .execute(&pool)
             .await;
 
@@ -683,6 +706,61 @@ impl Database {
         let _ = sqlx::query("VACUUM").execute(&self.pool).await;
 
         Ok((deleted_sessions.rows_affected(), deleted_logs.rows_affected()))
+    }
+
+    // ===== ThreadCast 매핑 =====
+
+    /// ThreadCast 매핑 저장 (세션 ID -> Todo ID)
+    pub async fn save_threadcast_mapping(
+        &self,
+        session_id: &str,
+        todo_id: &str,
+        mission_id: Option<&str>,
+    ) -> Result<()> {
+        let now = chrono::Utc::now().timestamp();
+
+        sqlx::query(
+            r#"
+            INSERT OR REPLACE INTO threadcast_mapping (session_id, todo_id, mission_id, created_at)
+            VALUES (?, ?, ?, ?)
+            "#,
+        )
+        .bind(session_id)
+        .bind(todo_id)
+        .bind(mission_id)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// ThreadCast 매핑 조회 (세션 ID로)
+    pub async fn get_threadcast_mapping(&self, session_id: &str) -> Result<Option<(String, Option<String>)>> {
+        let result = sqlx::query(
+            "SELECT todo_id, mission_id FROM threadcast_mapping WHERE session_id = ?"
+        )
+        .bind(session_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(result.map(|row| {
+            let todo_id: String = row.get("todo_id");
+            let mission_id: Option<String> = row.get("mission_id");
+            (todo_id, mission_id)
+        }))
+    }
+
+    /// ThreadCast Todo ID로 매핑 조회
+    pub async fn get_sessions_by_todo_id(&self, todo_id: &str) -> Result<Vec<String>> {
+        let rows = sqlx::query(
+            "SELECT session_id FROM threadcast_mapping WHERE todo_id = ?"
+        )
+        .bind(todo_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows.iter().map(|row| row.get("session_id")).collect())
     }
 }
 

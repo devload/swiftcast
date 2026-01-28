@@ -1,3 +1,7 @@
+use super::hooks::{FileLoggerHook, HookRegistry, RequestContext, ResponseBuilder};
+use super::question_detector::QuestionDetector;
+use super::step_tracker::StepTracker;
+use super::webhook::{AIQuestionData, UsageData, WebhookClient};
 use crate::storage::Database;
 use anyhow::Result;
 use axum::{
@@ -169,9 +173,72 @@ fn parse_usage_from_sse(data: &str) -> Option<UsageInfo> {
     None
 }
 
+/// Extract text content from SSE streaming response
+fn parse_text_from_sse(data: &str) -> Option<String> {
+    let mut text = String::new();
+
+    for line in data.lines() {
+        if line.starts_with("data: ") {
+            let json_str = &line[6..];
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(json_str) {
+                // content_block_delta 이벤트에서 텍스트 추출
+                if json.get("type").and_then(|v| v.as_str()) == Some("content_block_delta") {
+                    if let Some(delta) = json.get("delta") {
+                        if let Some(t) = delta.get("text").and_then(|v| v.as_str()) {
+                            text.push_str(t);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+/// Tool use info extracted from SSE
+#[derive(Debug, Clone)]
+struct ToolUseInfo {
+    name: String,
+    input: Option<serde_json::Value>,
+}
+
+/// Extract tool_use from SSE streaming response (content_block_start event)
+fn parse_tool_use_from_sse(data: &str) -> Option<ToolUseInfo> {
+    for line in data.lines() {
+        if line.starts_with("data: ") {
+            let json_str = &line[6..];
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(json_str) {
+                // content_block_start with type: tool_use
+                if json.get("type").and_then(|v| v.as_str()) == Some("content_block_start") {
+                    if let Some(content_block) = json.get("content_block") {
+                        if content_block.get("type").and_then(|v| v.as_str()) == Some("tool_use") {
+                            if let Some(name) = content_block.get("name").and_then(|v| v.as_str()) {
+                                return Some(ToolUseInfo {
+                                    name: name.to_string(),
+                                    input: content_block.get("input").cloned(),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 pub struct ProxyServer {
     db: Arc<Database>,
     client: reqwest::Client,
+    webhook: WebhookClient,
+    question_detector: QuestionDetector,
+    step_tracker: StepTracker,
+    hook_registry: HookRegistry,
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
@@ -179,6 +246,10 @@ pub struct ProxyServer {
 struct ProxyState {
     db: Arc<Database>,
     client: reqwest::Client,
+    webhook: WebhookClient,
+    question_detector: QuestionDetector,
+    step_tracker: StepTracker,
+    hook_registry: HookRegistry,
     db_task_semaphore: Arc<Semaphore>, // DB 작업 동시 실행 제한
 }
 
@@ -194,6 +265,10 @@ impl ProxyServer {
         Self {
             db,
             client,
+            webhook: WebhookClient::new(),
+            question_detector: QuestionDetector::new(),
+            step_tracker: StepTracker::new(),
+            hook_registry: HookRegistry::new(),
             shutdown_tx: None,
         }
     }
@@ -202,13 +277,73 @@ impl ProxyServer {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.shutdown_tx = Some(tx);
 
+        // Load webhook configuration from DB
+        let webhook_url = self.db.get_config("threadcast_webhook_url").await.ok().flatten();
+        let webhook_enabled = self.db.get_config("threadcast_webhook_enabled").await
+            .ok()
+            .flatten()
+            .map(|v| v == "true")
+            .unwrap_or(false);
+        self.webhook.configure(webhook_url.clone(), webhook_enabled).await;
+
+        tracing::info!(
+            "Webhook configured: enabled={}, url={:?}",
+            webhook_enabled,
+            webhook_url
+        );
+
+        // Load hook configuration from DB
+        let hooks_enabled = self.db.get_config("hooks_enabled").await
+            .ok()
+            .flatten()
+            .map(|v| v == "true")
+            .unwrap_or(true); // Default to enabled
+        let hooks_log_dir = self.db.get_config("hooks_log_dir").await
+            .ok()
+            .flatten()
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(FileLoggerHook::default_log_dir);
+        let hooks_retention_days = self.db.get_config("hooks_retention_days").await
+            .ok()
+            .flatten()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(30);
+
+        // Initialize and register FileLoggerHook
+        let file_logger = FileLoggerHook::new(hooks_log_dir.clone())
+            .with_retention_days(hooks_retention_days);
+        self.hook_registry.register(Arc::new(file_logger)).await;
+        self.hook_registry.set_enabled(hooks_enabled).await;
+
+        tracing::info!(
+            "Hooks configured: enabled={}, log_dir={:?}, retention_days={}",
+            hooks_enabled,
+            hooks_log_dir,
+            hooks_retention_days
+        );
+
+        // Cleanup old log files on startup
+        if hooks_enabled {
+            let cleanup_dir = hooks_log_dir.clone();
+            let cleanup_days = hooks_retention_days;
+            tokio::spawn(async move {
+                let cleaner = FileLoggerHook::new(cleanup_dir).with_retention_days(cleanup_days);
+                cleaner.cleanup_old_logs().await;
+            });
+        }
+
         let state = ProxyState {
             db: self.db.clone(),
             client: self.client.clone(),
+            webhook: self.webhook.clone(),
+            question_detector: self.question_detector.clone(),
+            step_tracker: self.step_tracker.clone(),
+            hook_registry: self.hook_registry.clone(),
             db_task_semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT_DB_TASKS)),
         };
 
         let app = Router::new()
+            .route("/_swiftcast/threadcast/mapping", axum::routing::post(register_threadcast_mapping))
             .route("/*path", any(proxy_handler))
             .layer(CorsLayer::permissive())
             .with_state(state);
@@ -248,6 +383,14 @@ async fn proxy_handler(
 ) -> Result<Response, StatusCode> {
     // 요청 경로 (소유권 이전 전에 복사)
     let path = req.uri().path().to_string();
+
+    // Handle internal SwiftCast API endpoints
+    tracing::info!("Checking path: '{}', method: {:?}", path, method);
+    if path == "/_swiftcast/threadcast/mapping" && method == Method::POST {
+        tracing::info!("Handling ThreadCast mapping request");
+        return handle_threadcast_mapping_internal(state, req).await;
+    }
+
     let query = req.uri().query().unwrap_or("").to_string();
     let full_path = if query.is_empty() {
         path.clone()
@@ -312,6 +455,28 @@ async fn proxy_handler(
 
             // 세션 설정 자동 등록 (에러 무시)
             let _ = state.db.upsert_session_config(sid, &acc.id, None).await;
+
+            // ThreadCast 환경변수 읽기 및 매핑 저장
+            let threadcast_todo_id = std::env::var("THREADCAST_TODO_ID").ok();
+            let threadcast_mission_id = std::env::var("THREADCAST_MISSION_ID").ok();
+
+            if let Some(ref todo_id) = threadcast_todo_id {
+                // ThreadCast 매핑 저장
+                if let Err(e) = state.db.save_threadcast_mapping(
+                    sid,
+                    todo_id,
+                    threadcast_mission_id.as_deref(),
+                ).await {
+                    tracing::warn!("Failed to save ThreadCast mapping: {}", e);
+                } else {
+                    tracing::info!(
+                        "THREADCAST MAPPING: session={} -> todo={}, mission={:?}",
+                        &sid[..std::cmp::min(12, sid.len())],
+                        todo_id,
+                        threadcast_mission_id
+                    );
+                }
+            }
 
             tracing::info!(
                 "NEW SESSION: {} -> {} (auto-assigned)",
@@ -417,6 +582,19 @@ async fn proxy_handler(
         body_len
     );
 
+    // Create RequestContext for hooks
+    let request_body_json = serde_json::from_slice(&body_bytes).unwrap_or(serde_json::Value::Null);
+    let request_context = RequestContext::new(
+        session_id.clone(),
+        request_info.model.clone(),
+        method.as_str().to_string(),
+        path.clone(),
+        request_body_json,
+    );
+
+    // Trigger request_before hook
+    state.hook_registry.trigger_request_before(&request_context).await;
+
     // 바디 추가 (Content-Length 명시적 설정)
     let body_vec = body_bytes.to_vec();
     if !body_vec.is_empty() {
@@ -462,14 +640,81 @@ async fn proxy_handler(
     let db = state.db.clone();
     let session_id_for_log = session_id.clone();
     let semaphore = state.db_task_semaphore.clone();
+    let webhook = state.webhook.clone();
+    let question_detector = state.question_detector.clone();
+    let step_tracker = state.step_tracker.clone();
+    let hook_registry = state.hook_registry.clone();
+    let request_context_for_stream = request_context.clone();
+
+    // Create ResponseBuilder for accumulating response data
+    let response_builder = ResponseBuilder::new(status.as_u16());
 
     let body_stream = response.bytes_stream();
 
-    // 스트림을 래핑하여 사용량 정보 추출
+    // 스트림을 래핑하여 사용량 정보 및 AI 질문 추출
+    let response_builder_for_stream = response_builder.clone();
     let wrapped_stream = body_stream.map(move |chunk_result| {
         if let Ok(ref chunk) = chunk_result {
-            // SSE 데이터에서 usage 추출 시도
+            // SSE 데이터에서 텍스트 및 usage 추출 시도
             if let Ok(text) = std::str::from_utf8(chunk) {
+                // Tool use 감지 및 step tracking
+                if let Some(tool_info) = parse_tool_use_from_sse(text) {
+                    let tracker = step_tracker.clone();
+                    let db_for_step = db.clone();
+                    let webhook_for_step = webhook.clone();
+                    let session_for_step = session_id_for_log.clone();
+
+                    tokio::spawn(async move {
+                        if let Some(ref sid) = session_for_step {
+                            if let Some(step_data) = tracker
+                                .process_tool_use(sid, &tool_info.name, tool_info.input.as_ref())
+                                .await
+                            {
+                                tracker.send_update(&db_for_step, &webhook_for_step, sid, step_data).await;
+                            }
+                        }
+                    });
+                }
+
+                // AI 질문 감지를 위한 텍스트 처리
+                if let Some(content_text) = parse_text_from_sse(text) {
+                    // Accumulate response text for hooks
+                    let rb = response_builder_for_stream.clone();
+                    let text_clone = content_text.clone();
+                    tokio::spawn(async move {
+                        rb.append_text(&text_clone).await;
+                    });
+
+                    let detector = question_detector.clone();
+                    let db_for_question = db.clone();
+                    let webhook_for_question = webhook.clone();
+                    let session_id_for_question = session_id_for_log.clone();
+
+                    tokio::spawn(async move {
+                        if let Some(detected) = detector.process_text(&content_text).await {
+                            tracing::info!(
+                                "AI QUESTION DETECTED: {}",
+                                detected.question.chars().take(50).collect::<String>()
+                            );
+
+                            // Send webhook if session has ThreadCast mapping
+                            if let Some(ref sid) = session_id_for_question {
+                                if let Ok(Some((todo_id, _))) = db_for_question.get_threadcast_mapping(sid).await {
+                                    let _ = webhook_for_question.send_ai_question(
+                                        Some(todo_id),
+                                        sid,
+                                        AIQuestionData {
+                                            question: detected.question,
+                                            options: detected.options,
+                                            context: detected.context,
+                                        },
+                                    ).await;
+                                }
+                            }
+                        }
+                    });
+                }
+
                 if let Some(usage) = parse_usage_from_sse(text) {
                     tracing::info!(
                         "USAGE: in={}, out={}",
@@ -477,12 +722,40 @@ async fn proxy_handler(
                         usage.output_tokens
                     );
 
+                    // Update response builder with token counts
+                    let rb = response_builder_for_stream.clone();
+                    let input = usage.input_tokens;
+                    let output = usage.output_tokens;
+                    tokio::spawn(async move {
+                        rb.set_tokens(input, output).await;
+                    });
+
                     // DB에 사용량 로깅 (비동기로 처리, Semaphore로 동시 실행 제한)
                     let db_clone = db.clone();
                     let account_id_clone = account_id.clone();
                     let model_clone = model.clone();
                     let session_id_clone = session_id_for_log.clone();
                     let sem = semaphore.clone();
+                    let webhook_clone = webhook.clone();
+                    let usage_input = usage.input_tokens;
+                    let usage_output = usage.output_tokens;
+
+                    // Trigger hooks with final response when we have usage (stream end indicator)
+                    let hr = hook_registry.clone();
+                    let req_ctx = request_context_for_stream.clone();
+                    let rb_final = response_builder_for_stream.clone();
+                    tokio::spawn(async move {
+                        // Small delay to ensure all text is accumulated
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        let res_ctx = rb_final.build().await;
+                        if res_ctx.is_success {
+                            hr.trigger_request_success(&req_ctx, &res_ctx).await;
+                        } else {
+                            hr.trigger_request_failed(&req_ctx, &res_ctx).await;
+                        }
+                        hr.trigger_response_complete(&req_ctx, &res_ctx).await;
+                        hr.trigger_request_after(&req_ctx, &res_ctx).await;
+                    });
 
                     tokio::spawn(async move {
                         // Semaphore permit 획득 시도 (논블로킹)
@@ -500,13 +773,28 @@ async fn proxy_handler(
                             .log_usage(
                                 &account_id_clone,
                                 &model_clone,
-                                usage.input_tokens,
-                                usage.output_tokens,
+                                usage_input,
+                                usage_output,
                                 session_id_clone.as_deref(),
                             )
                             .await
                         {
                             tracing::error!("Failed to log usage: {}", e);
+                        }
+
+                        // Send webhook to ThreadCast if session has ThreadCast mapping
+                        if let Some(ref sid) = session_id_clone {
+                            if let Ok(Some((todo_id, _))) = db_clone.get_threadcast_mapping(sid).await {
+                                let _ = webhook_clone.send_usage(
+                                    Some(todo_id),
+                                    sid,
+                                    UsageData {
+                                        model: model_clone,
+                                        input_tokens: usage_input,
+                                        output_tokens: usage_output,
+                                    },
+                                ).await;
+                            }
                         }
                     });
                 }
@@ -519,4 +807,97 @@ async fn proxy_handler(
 
     // 응답 반환
     Ok(builder.body(body).unwrap())
+}
+
+/// Request body for ThreadCast mapping registration
+#[derive(Debug, serde::Deserialize)]
+struct ThreadcastMappingRequest {
+    session_id: String,
+    todo_id: String,
+    mission_id: Option<String>,
+}
+
+/// Handle ThreadCast mapping from proxy_handler
+async fn handle_threadcast_mapping_internal(
+    state: ProxyState,
+    req: Request,
+) -> Result<Response, StatusCode> {
+    let body_bytes = axum::body::to_bytes(req.into_body(), 1024 * 1024)
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    let payload: ThreadcastMappingRequest = serde_json::from_slice(&body_bytes)
+        .map_err(|e| {
+            tracing::error!("Failed to parse ThreadCast mapping request: {}", e);
+            StatusCode::BAD_REQUEST
+        })?;
+
+    tracing::info!(
+        "Registering ThreadCast mapping: session={} -> todo={}",
+        &payload.session_id[..std::cmp::min(12, payload.session_id.len())],
+        payload.todo_id
+    );
+
+    match state
+        .db
+        .save_threadcast_mapping(
+            &payload.session_id,
+            &payload.todo_id,
+            payload.mission_id.as_deref(),
+        )
+        .await
+    {
+        Ok(_) => {
+            tracing::info!("ThreadCast mapping registered successfully");
+            let body = serde_json::json!({
+                "success": true,
+                "session_id": payload.session_id,
+                "todo_id": payload.todo_id
+            });
+            Ok(Response::builder()
+                .status(StatusCode::OK)
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap())
+        }
+        Err(e) => {
+            tracing::error!("Failed to register ThreadCast mapping: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+/// Register ThreadCast session -> todo mapping
+async fn register_threadcast_mapping(
+    State(state): State<ProxyState>,
+    axum::Json(payload): axum::Json<ThreadcastMappingRequest>,
+) -> Result<axum::Json<serde_json::Value>, StatusCode> {
+    tracing::info!(
+        "Registering ThreadCast mapping: session={} -> todo={}",
+        &payload.session_id[..std::cmp::min(12, payload.session_id.len())],
+        payload.todo_id
+    );
+
+    match state
+        .db
+        .save_threadcast_mapping(
+            &payload.session_id,
+            &payload.todo_id,
+            payload.mission_id.as_deref(),
+        )
+        .await
+    {
+        Ok(_) => {
+            tracing::info!("ThreadCast mapping registered successfully");
+            Ok(axum::Json(serde_json::json!({
+                "success": true,
+                "session_id": payload.session_id,
+                "todo_id": payload.todo_id
+            })))
+        }
+        Err(e) => {
+            tracing::error!("Failed to register ThreadCast mapping: {}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
 }
