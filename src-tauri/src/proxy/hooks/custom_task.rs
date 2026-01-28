@@ -10,7 +10,7 @@ use super::context::RequestContext;
 /// Task definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskDefinition {
-    /// Task name (used in /tasks <name>)
+    /// Task name (used in /swiftcast <name>)
     pub name: String,
     /// Description of the task
     pub description: String,
@@ -63,7 +63,7 @@ pub struct InterceptResult {
     pub task_name: Option<String>,
 }
 
-/// Custom Task Hook for intercepting /tasks commands
+/// Custom Task Hook for intercepting /swiftcast commands
 pub struct CustomTaskHook {
     tasks: RwLock<HashMap<String, TaskDefinition>>,
     config_path: PathBuf,
@@ -134,10 +134,10 @@ impl CustomTaskHook {
         tasks.values().cloned().collect()
     }
 
-    /// Check if message contains /tasks command and extract task name
+    /// Check if message contains /swiftcast command and extract task name
     fn parse_task_command(message: &str) -> Option<(String, String)> {
-        // Look for /tasks <name> pattern
-        let patterns = ["/tasks ", "/task "];
+        // Look for /swiftcast <name> pattern
+        let patterns = ["/swiftcast "];
         for pattern in patterns {
             if let Some(pos) = message.find(pattern) {
                 let after = &message[pos + pattern.len()..];
@@ -269,7 +269,7 @@ impl CustomTaskHook {
         Ok(format!("```\n{}\n```", content))
     }
 
-    /// Try to intercept a request containing /tasks command
+    /// Try to intercept a request containing /swiftcast command
     pub async fn try_intercept(&self, ctx: &RequestContext) -> InterceptResult {
         // Extract user message from request body
         let user_message = ctx.body.get("messages")
@@ -303,7 +303,7 @@ impl CustomTaskHook {
             },
         };
 
-        // Check for /tasks command
+        // Check for /swiftcast command
         let (task_name, args) = match Self::parse_task_command(&user_message) {
             Some((name, args)) => (name, args),
             None => return InterceptResult {
@@ -313,7 +313,7 @@ impl CustomTaskHook {
             },
         };
 
-        // Special command: /tasks list
+        // Special command: /swiftcast list
         if task_name == "list" {
             let tasks = self.list_tasks().await;
             let list = if tasks.is_empty() {
@@ -331,7 +331,7 @@ impl CustomTaskHook {
             };
         }
 
-        // Special command: /tasks reload
+        // Special command: /swiftcast reload
         if task_name == "reload" {
             match self.reload_tasks().await {
                 Ok(_) => {
@@ -359,7 +359,7 @@ impl CustomTaskHook {
             None => {
                 return InterceptResult {
                     intercepted: true,
-                    response_text: format!("Unknown task: '{}'\n\nUse `/tasks list` to see available tasks.", task_name),
+                    response_text: format!("Unknown task: '{}'\n\nUse `/swiftcast list` to see available tasks.", task_name),
                     task_name: Some(task_name),
                 };
             }
@@ -465,15 +465,15 @@ mod tests {
     #[test]
     fn test_parse_task_command() {
         assert_eq!(
-            CustomTaskHook::parse_task_command("/tasks build"),
+            CustomTaskHook::parse_task_command("/swiftcast build"),
             Some(("build".to_string(), "".to_string()))
         );
         assert_eq!(
-            CustomTaskHook::parse_task_command("/tasks deploy prod"),
+            CustomTaskHook::parse_task_command("/swiftcast deploy prod"),
             Some(("deploy".to_string(), "prod".to_string()))
         );
         assert_eq!(
-            CustomTaskHook::parse_task_command("hello /tasks test arg1 arg2"),
+            CustomTaskHook::parse_task_command("hello /swiftcast test arg1 arg2"),
             Some(("test".to_string(), "arg1 arg2".to_string()))
         );
         assert_eq!(

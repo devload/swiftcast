@@ -1,0 +1,984 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Claude Code Internals Documentation</title>
+    <style>
+        :root {
+            --bg-primary: #1a1a2e;
+            --bg-secondary: #16213e;
+            --bg-tertiary: #0f3460;
+            --text-primary: #eaeaea;
+            --text-secondary: #a0a0a0;
+            --accent: #e94560;
+            --accent-secondary: #0ea5e9;
+            --code-bg: #0d1117;
+            --border-color: #30363d;
+            --success: #22c55e;
+            --warning: #eab308;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            text-align: center;
+            padding: 40px 0;
+            border-bottom: 1px solid var(--border-color);
+            margin-bottom: 40px;
+        }
+
+        header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            background: linear-gradient(135deg, var(--accent), var(--accent-secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        header p {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+        }
+
+        nav {
+            background: var(--bg-secondary);
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 40px;
+            position: sticky;
+            top: 10px;
+            z-index: 100;
+        }
+
+        nav h2 {
+            font-size: 1rem;
+            color: var(--text-secondary);
+            margin-bottom: 15px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        nav ul {
+            list-style: none;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        nav a {
+            color: var(--accent-secondary);
+            text-decoration: none;
+            padding: 8px 16px;
+            background: var(--bg-tertiary);
+            border-radius: 6px;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+        }
+
+        nav a:hover {
+            background: var(--accent);
+            color: white;
+        }
+
+        section {
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 30px;
+            border: 1px solid var(--border-color);
+        }
+
+        section h2 {
+            font-size: 1.8rem;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid var(--accent);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        section h2 .number {
+            background: var(--accent);
+            color: white;
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1rem;
+        }
+
+        h3 {
+            font-size: 1.3rem;
+            margin: 25px 0 15px;
+            color: var(--accent-secondary);
+        }
+
+        h4 {
+            font-size: 1.1rem;
+            margin: 20px 0 10px;
+            color: var(--text-primary);
+        }
+
+        p {
+            margin-bottom: 15px;
+            color: var(--text-secondary);
+        }
+
+        pre {
+            background: var(--code-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 15px;
+            overflow-x: auto;
+            margin: 15px 0;
+            font-family: 'SF Mono', 'Fira Code', Consolas, monospace;
+            font-size: 0.85rem;
+            line-height: 1.5;
+        }
+
+        code {
+            font-family: 'SF Mono', 'Fira Code', Consolas, monospace;
+            background: var(--code-bg);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.9em;
+            color: var(--accent-secondary);
+        }
+
+        pre code {
+            background: none;
+            padding: 0;
+            color: var(--text-primary);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+            font-size: 0.9rem;
+        }
+
+        th, td {
+            padding: 12px 15px;
+            text-align: left;
+            border: 1px solid var(--border-color);
+        }
+
+        th {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+
+        td {
+            background: var(--bg-primary);
+            color: var(--text-secondary);
+        }
+
+        tr:hover td {
+            background: var(--bg-tertiary);
+        }
+
+        .highlight {
+            background: linear-gradient(135deg, rgba(233, 69, 96, 0.1), rgba(14, 165, 233, 0.1));
+            border-left: 4px solid var(--accent);
+            padding: 15px 20px;
+            border-radius: 0 8px 8px 0;
+            margin: 15px 0;
+        }
+
+        .highlight strong {
+            color: var(--accent);
+        }
+
+        .cause-effect {
+            display: grid;
+            grid-template-columns: 1fr auto 1fr;
+            gap: 15px;
+            align-items: stretch;
+            margin: 20px 0;
+        }
+
+        .cause-effect .arrow {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2rem;
+            color: var(--accent);
+        }
+
+        .cause-effect .box {
+            background: var(--code-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 15px;
+        }
+
+        .cause-effect .box.api {
+            border-color: var(--accent-secondary);
+        }
+
+        .cause-effect .box.terminal {
+            border-color: var(--success);
+        }
+
+        .cause-effect .box h5 {
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+            letter-spacing: 1px;
+        }
+
+        .cause-effect .box.api h5 {
+            color: var(--accent-secondary);
+        }
+
+        .cause-effect .box.terminal h5 {
+            color: var(--success);
+        }
+
+        .cause-effect pre {
+            margin: 0;
+            font-size: 0.8rem;
+        }
+
+        .flow-diagram {
+            background: var(--code-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 20px;
+            font-family: 'SF Mono', monospace;
+            font-size: 0.85rem;
+            white-space: pre;
+            overflow-x: auto;
+            color: var(--text-secondary);
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .badge-success { background: rgba(34, 197, 94, 0.2); color: var(--success); }
+        .badge-warning { background: rgba(234, 179, 8, 0.2); color: var(--warning); }
+        .badge-info { background: rgba(14, 165, 233, 0.2); color: var(--accent-secondary); }
+
+        .grid-2 {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin: 20px 0;
+        }
+
+        .card {
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 20px;
+        }
+
+        .card h4 {
+            margin-top: 0;
+            color: var(--accent-secondary);
+        }
+
+        footer {
+            text-align: center;
+            padding: 40px 0;
+            border-top: 1px solid var(--border-color);
+            margin-top: 40px;
+            color: var(--text-secondary);
+        }
+
+        footer a {
+            color: var(--accent-secondary);
+            text-decoration: none;
+        }
+
+        .step-indicator {
+            background: var(--accent);
+            color: white;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            margin-right: 8px;
+        }
+
+        @media (max-width: 900px) {
+            .cause-effect {
+                grid-template-columns: 1fr;
+            }
+            .cause-effect .arrow {
+                transform: rotate(90deg);
+            }
+        }
+
+        @media (max-width: 768px) {
+            header h1 { font-size: 1.8rem; }
+            section { padding: 20px; }
+            nav ul { flex-direction: column; }
+            nav { position: static; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Claude Code Internals</h1>
+            <p>API 응답 → 터미널 표시의 인과관계 분석</p>
+        </header>
+
+        <nav>
+            <h2>목차</h2>
+            <ul>
+                <li><a href="#overview">전체 흐름</a></li>
+                <li><a href="#text">텍스트 출력</a></li>
+                <li><a href="#thinking">Thinking 애니메이션</a></li>
+                <li><a href="#tool-use">도구 호출</a></li>
+                <li><a href="#subagent">Task/Subagent</a></li>
+                <li><a href="#sequential">순차 작업</a></li>
+                <li><a href="#hooks">Hook 캡처</a></li>
+            </ul>
+        </nav>
+
+        <!-- Section 0: Overview -->
+        <section id="overview">
+            <h2><span class="number">0</span> 전체 동작 흐름</h2>
+
+            <div class="highlight">
+                <strong>핵심:</strong> Claude Code는 API 응답의 <code>content</code> 배열과 <code>stop_reason</code>을 해석하여 터미널에 렌더링하고, 다음 액션을 결정합니다.
+            </div>
+
+            <h3>Request → Response → Action 흐름</h3>
+            <div class="flow-diagram">
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  User Input: "파일 읽고 수정해줘"                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  Claude Code → API Request                                                   │
+│  {                                                                           │
+│    "system": "You are Claude Code...",                                       │
+│    "tools": [{"name": "Read"}, {"name": "Edit"}, ...],                       │
+│    "messages": [{"role": "user", "content": "파일 읽고 수정해줘"}]              │
+│  }                                                                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  API → SSE Stream Response                                                   │
+│  event: content_block_delta                                                  │
+│  data: {"delta": {"type": "text_delta", "text": "파일을"}}                    │
+│  ...                                                                         │
+│  event: message_delta                                                        │
+│  data: {"delta": {"stop_reason": "tool_use"}}                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  Claude Code 해석                                                            │
+│                                                                              │
+│  1. content[0].type == "text" → 터미널에 텍스트 출력                           │
+│  2. content[1].type == "tool_use" → 도구 실행 UI 표시                          │
+│  3. stop_reason == "tool_use" → 도구 실행 후 결과 전송                         │
+│  4. stop_reason == "end_turn" → 사용자 입력 대기                               │
+└─────────────────────────────────────────────────────────────────────────────┘</div>
+
+            <h3>API Response 구조</h3>
+            <pre><code>{
+  "id": "msg_xxx",
+  "role": "assistant",
+  "content": [                          // ← 이 배열을 순회하며 렌더링
+    {"type": "text", "text": "..."},    // → 텍스트 출력
+    {"type": "thinking", "thinking": "..."},  // → Thinking 표시
+    {"type": "tool_use", "name": "Read", "input": {...}}  // → 도구 UI
+  ],
+  "stop_reason": "tool_use",            // ← 다음 액션 결정
+  "usage": {"input_tokens": 100, "output_tokens": 50}
+}</code></pre>
+        </section>
+
+        <!-- Section 1: Text Output -->
+        <section id="text">
+            <h2><span class="number">1</span> 텍스트 출력</h2>
+
+            <p><strong>조건:</strong> <code>content[].type == "text"</code> 이고 스트리밍 중 <code>delta.type == "text_delta"</code></p>
+
+            <div class="cause-effect">
+                <div class="box api">
+                    <h5>API Response (SSE)</h5>
+                    <pre><code>event: content_block_start
+data: {"index": 0, "content_block": {"type": "text", "text": ""}}
+
+event: content_block_delta
+data: {"index": 0, "delta": {"type": "text_delta", "text": "안녕"}}
+
+event: content_block_delta
+data: {"index": 0, "delta": {"type": "text_delta", "text": "하세요"}}
+
+event: content_block_delta
+data: {"index": 0, "delta": {"type": "text_delta", "text": "!"}}</code></pre>
+                </div>
+                <div class="arrow">→</div>
+                <div class="box terminal">
+                    <h5>Terminal Display</h5>
+                    <pre><code>안녕하세요!</code></pre>
+                    <p style="color: var(--text-secondary); font-size: 0.8rem; margin-top: 10px;">
+                        각 text_delta가 도착할 때마다 실시간으로 append됨 (타이핑 효과)
+                    </p>
+                </div>
+            </div>
+
+            <h4>Claude Code 처리 로직</h4>
+            <pre><code>// 스트리밍 중
+if (delta.type === "text_delta") {
+    process.stdout.write(delta.text);  // 실시간 출력
+}</code></pre>
+        </section>
+
+        <!-- Section 2: Thinking -->
+        <section id="thinking">
+            <h2><span class="number">2</span> Thinking 애니메이션</h2>
+
+            <p><strong>조건:</strong> <code>content_block.type == "thinking"</code> 이고 스트리밍 중 <code>delta.type == "thinking_delta"</code></p>
+
+            <div class="cause-effect">
+                <div class="box api">
+                    <h5>API Response (SSE)</h5>
+                    <pre><code>event: content_block_start
+data: {"index": 0, "content_block": {"type": "thinking", "thinking": ""}}
+
+event: content_block_delta
+data: {"index": 0, "delta": {"type": "thinking_delta", "thinking": "Let me"}}
+
+event: content_block_delta
+data: {"index": 0, "delta": {"type": "thinking_delta", "thinking": " analyze"}}
+
+event: content_block_delta
+data: {"index": 0, "delta": {"type": "signature_delta", "signature": "xxx"}}
+
+event: content_block_stop
+data: {"index": 0}</code></pre>
+                </div>
+                <div class="arrow">→</div>
+                <div class="box terminal">
+                    <h5>Terminal Display</h5>
+                    <pre><code>⠋ Thinking...
+⠙ Thinking...
+⠹ Thinking...
+⠸ Thinking...</code></pre>
+                    <p style="color: var(--text-secondary); font-size: 0.8rem; margin-top: 10px;">
+                        thinking 블록이 진행되는 동안 스피너 애니메이션.<br>
+                        content_block_stop 받으면 종료.
+                    </p>
+                </div>
+            </div>
+
+            <h4>Claude Code 처리 로직</h4>
+            <pre><code>// thinking 블록 시작 감지
+if (content_block.type === "thinking") {
+    startSpinnerAnimation("Thinking...");
+}
+
+// thinking 블록 종료
+if (event === "content_block_stop" && currentBlockType === "thinking") {
+    stopSpinnerAnimation();
+}
+
+// thinking 내용 자체는 일반적으로 사용자에게 표시하지 않음
+// (Extended Thinking이 숨겨진 이유)</code></pre>
+        </section>
+
+        <!-- Section 3: Tool Use -->
+        <section id="tool-use">
+            <h2><span class="number">3</span> 도구 호출 (Read, Edit, Bash 등)</h2>
+
+            <p><strong>조건:</strong> <code>content[].type == "tool_use"</code></p>
+
+            <h3>Read 도구</h3>
+            <div class="cause-effect">
+                <div class="box api">
+                    <h5>API Response</h5>
+                    <pre><code>{
+  "content": [
+    {"type": "text", "text": "파일을 읽어볼게요."},
+    {
+      "type": "tool_use",
+      "id": "toolu_01xxx",
+      "name": "Read",
+      "input": {"file_path": "/src/main.rs"}
+    }
+  ],
+  "stop_reason": "tool_use"
+}</code></pre>
+                </div>
+                <div class="arrow">→</div>
+                <div class="box terminal">
+                    <h5>Terminal Display</h5>
+                    <pre><code>파일을 읽어볼게요.
+
+⏺ Read(/src/main.rs)
+  ⎿ 1: fn main() {
+      2:     println!("Hello");
+      3: }</code></pre>
+                </div>
+            </div>
+
+            <h3>Edit 도구</h3>
+            <div class="cause-effect">
+                <div class="box api">
+                    <h5>API Response</h5>
+                    <pre><code>{
+  "type": "tool_use",
+  "name": "Edit",
+  "input": {
+    "file_path": "/src/main.rs",
+    "old_string": "println!(\"Hello\")",
+    "new_string": "println!(\"Hello, World!\")"
+  }
+}</code></pre>
+                </div>
+                <div class="arrow">→</div>
+                <div class="box terminal">
+                    <h5>Terminal Display</h5>
+                    <pre><code>⏺ Edit(/src/main.rs)
+  ⎿ <span style="color: #ef4444;">- println!("Hello")</span>
+    <span style="color: #22c55e;">+ println!("Hello, World!")</span></code></pre>
+                </div>
+            </div>
+
+            <h3>Bash 도구</h3>
+            <div class="cause-effect">
+                <div class="box api">
+                    <h5>API Response</h5>
+                    <pre><code>{
+  "type": "tool_use",
+  "name": "Bash",
+  "input": {
+    "command": "cargo build"
+  }
+}</code></pre>
+                </div>
+                <div class="arrow">→</div>
+                <div class="box terminal">
+                    <h5>Terminal Display</h5>
+                    <pre><code>⏺ Bash(cargo build)
+  ⎿ Compiling myapp v0.1.0
+    Finished dev [unoptimized]</code></pre>
+                </div>
+            </div>
+
+            <h4>Claude Code 처리 로직</h4>
+            <pre><code>for (const block of response.content) {
+    if (block.type === "text") {
+        print(block.text);
+    }
+    else if (block.type === "tool_use") {
+        // 1. UI 표시
+        print(`⏺ ${block.name}(${formatInput(block.input)})`);
+
+        // 2. 실제 도구 실행
+        const result = await executeToolLocally(block.name, block.input);
+
+        // 3. 결과 표시
+        print(`  ⎿ ${result}`);
+
+        // 4. 결과를 다음 API 요청에 포함
+        toolResults.push({
+            type: "tool_result",
+            tool_use_id: block.id,
+            content: result
+        });
+    }
+}
+
+// stop_reason이 "tool_use"이면 tool_result와 함께 다음 요청
+if (response.stop_reason === "tool_use") {
+    await sendNextRequest(toolResults);
+}</code></pre>
+        </section>
+
+        <!-- Section 4: Subagent -->
+        <section id="subagent">
+            <h2><span class="number">4</span> Task/Subagent</h2>
+
+            <div class="highlight">
+                <strong>핵심:</strong> Task는 API 기능이 아니라 <strong>Claude Code 기능</strong>입니다. Task tool_use를 받으면 Claude Code가 <strong>별도의 새 API 세션</strong>을 생성합니다.
+            </div>
+
+            <h3>Task 호출 흐름</h3>
+            <div class="cause-effect">
+                <div class="box api">
+                    <h5>Main Session API Response</h5>
+                    <pre><code>{
+  "content": [
+    {"type": "text", "text": "코드베이스를 탐색해볼게요."},
+    {
+      "type": "tool_use",
+      "id": "toolu_01xxx",
+      "name": "Task",
+      "input": {
+        "subagent_type": "Explore",
+        "description": "Find hook files",
+        "prompt": "Search for hook-related files"
+      }
+    }
+  ],
+  "stop_reason": "tool_use"
+}</code></pre>
+                </div>
+                <div class="arrow">→</div>
+                <div class="box terminal">
+                    <h5>Terminal Display</h5>
+                    <pre><code>코드베이스를 탐색해볼게요.
+
+⏺ Task(Find hook files)
+  ├─ <span style="color: #0ea5e9;">Explore agent started</span>
+  │  ⏺ Glob(**/*hook*.rs)
+  │  ⏺ Read(src/hooks/mod.rs)
+  │  ⏺ Read(src/hooks/traits.rs)
+  ⎿ Found 5 hook-related files:
+    - src/hooks/mod.rs
+    - src/hooks/traits.rs
+    ...</code></pre>
+                </div>
+            </div>
+
+            <h4>Claude Code가 내부적으로 하는 일</h4>
+            <div class="flow-diagram">
+Main Session                          Subagent Session (NEW!)
+     │                                       │
+     │  tool_use(Task)                       │
+     │──────────────────────────────────────>│
+     │                                       │
+     │  [Claude Code creates new API session]│
+     │                                       │
+     │                                ┌──────┴──────┐
+     │                                │ New Request │
+     │                                │ - model: haiku
+     │                                │ - system: "You are Explore agent..."
+     │                                │ - tools: [Glob, Grep, Read] (제한됨)
+     │                                │ - messages: [{prompt}]
+     │                                └──────┬──────┘
+     │                                       │
+     │                                       ▼
+     │                                tool_use(Glob) → 실행 → tool_result
+     │                                       │
+     │                                       ▼
+     │                                tool_use(Read) → 실행 → tool_result
+     │                                       │
+     │                                       ▼
+     │                                stop_reason: "end_turn"
+     │                                "Found 5 files..."
+     │                                       │
+     │<──────────────────────────────────────│
+     │  tool_result: "Found 5 files..."      │
+     │                                       │
+     ▼
+Continue main session...</div>
+
+            <h4>Subagent Types & 설정</h4>
+            <table>
+                <tr><th>Type</th><th>Model</th><th>Tools</th><th>System Prompt 핵심</th></tr>
+                <tr>
+                    <td><strong>Explore</strong></td>
+                    <td>Haiku (빠름)</td>
+                    <td>Glob, Grep, Read (읽기 전용)</td>
+                    <td>"You are a fast, read-only agent for exploring codebases"</td>
+                </tr>
+                <tr>
+                    <td><strong>Plan</strong></td>
+                    <td>Inherit</td>
+                    <td>읽기 전용</td>
+                    <td>"You are a planning agent that researches before presenting a plan"</td>
+                </tr>
+                <tr>
+                    <td><strong>general-purpose</strong></td>
+                    <td>Inherit</td>
+                    <td>All (*)</td>
+                    <td>"You are a capable agent for complex multi-step tasks"</td>
+                </tr>
+            </table>
+        </section>
+
+        <!-- Section 5: Sequential Work -->
+        <section id="sequential">
+            <h2><span class="number">5</span> 순차 작업의 원리</h2>
+
+            <p><strong>질문:</strong> AI가 어떻게 순차적으로 일을 하는가?</p>
+            <p><strong>답:</strong> <code>stop_reason</code>이 루프를 제어합니다.</p>
+
+            <h3>stop_reason에 따른 Claude Code 동작</h3>
+            <table>
+                <tr><th>stop_reason</th><th>의미</th><th>Claude Code 동작</th></tr>
+                <tr>
+                    <td><code>"tool_use"</code></td>
+                    <td>도구 실행 필요</td>
+                    <td>도구 실행 → tool_result 전송 → <strong>다음 요청</strong></td>
+                </tr>
+                <tr>
+                    <td><code>"end_turn"</code></td>
+                    <td>응답 완료</td>
+                    <td><strong>루프 종료</strong> → 사용자 입력 대기</td>
+                </tr>
+                <tr>
+                    <td><code>"max_tokens"</code></td>
+                    <td>토큰 한도</td>
+                    <td>이어서 <strong>계속 요청</strong></td>
+                </tr>
+            </table>
+
+            <h3>실제 순차 작업 예시</h3>
+            <div class="flow-diagram">
+User: "main.rs 읽고 버그 수정해"
+                │
+                ▼
+┌─────────────────────────────────────────────────────────────┐
+│ <span class="step-indicator">Request 1</span>                                                    │
+│ messages: [{role: "user", content: "main.rs 읽고 버그 수정해"}] │
+└─────────────────────────────────────────────────────────────┘
+                │
+                ▼
+┌─────────────────────────────────────────────────────────────┐
+│ <span class="step-indicator">Response 1</span>                                                   │
+│ content: [                                                   │
+│   {type: "text", text: "파일을 읽어볼게요"},                    │
+│   {type: "tool_use", name: "Read", input: {path: "main.rs"}} │
+│ ]                                                            │
+│ <strong style="color: var(--accent);">stop_reason: "tool_use"</strong>  ← 도구 실행 필요!                     │
+└─────────────────────────────────────────────────────────────┘
+                │
+                ▼ Claude Code: Read 실행, 결과 수집
+                │
+┌─────────────────────────────────────────────────────────────┐
+│ <span class="step-indicator">Request 2</span>                                                    │
+│ messages: [                                                  │
+│   ...이전 메시지들...,                                         │
+│   {role: "user", content: [{type: "tool_result", ...}]}      │
+│ ]                                                            │
+└─────────────────────────────────────────────────────────────┘
+                │
+                ▼
+┌─────────────────────────────────────────────────────────────┐
+│ <span class="step-indicator">Response 2</span>                                                   │
+│ content: [                                                   │
+│   {type: "text", text: "버그를 찾았어요. 수정할게요"},            │
+│   {type: "tool_use", name: "Edit", input: {...}}             │
+│ ]                                                            │
+│ <strong style="color: var(--accent);">stop_reason: "tool_use"</strong>  ← 또 도구 실행!                       │
+└─────────────────────────────────────────────────────────────┘
+                │
+                ▼ Claude Code: Edit 실행, 결과 수집
+                │
+┌─────────────────────────────────────────────────────────────┐
+│ <span class="step-indicator">Request 3</span>                                                    │
+│ messages: [...이전 메시지들..., {tool_result}]                 │
+└─────────────────────────────────────────────────────────────┘
+                │
+                ▼
+┌─────────────────────────────────────────────────────────────┐
+│ <span class="step-indicator">Response 3</span>                                                   │
+│ content: [                                                   │
+│   {type: "text", text: "버그를 수정했습니다!"}                   │
+│ ]                                                            │
+│ <strong style="color: var(--success);">stop_reason: "end_turn"</strong>  ← 작업 완료!                        │
+└─────────────────────────────────────────────────────────────┘
+                │
+                ▼
+         [사용자 입력 대기]</div>
+
+            <h4>Claude Code 루프 코드 (pseudo)</h4>
+            <pre><code>async function runConversation(userMessage) {
+    messages.push({role: "user", content: userMessage});
+
+    while (true) {
+        const response = await callClaudeAPI(messages);
+
+        // 응답 표시 & 도구 실행
+        const toolResults = [];
+        for (const block of response.content) {
+            if (block.type === "text") {
+                print(block.text);
+            }
+            else if (block.type === "tool_use") {
+                const result = await executeTool(block);
+                toolResults.push({
+                    type: "tool_result",
+                    tool_use_id: block.id,
+                    content: result
+                });
+            }
+        }
+
+        // 메시지 히스토리에 추가
+        messages.push({role: "assistant", content: response.content});
+
+        // stop_reason 체크
+        if (response.stop_reason === "end_turn") {
+            break;  // 루프 종료!
+        }
+        else if (response.stop_reason === "tool_use") {
+            // tool_result를 다음 메시지로 추가하고 계속
+            messages.push({role: "user", content: toolResults});
+        }
+    }
+}</code></pre>
+        </section>
+
+        <!-- Section 6: Hook Capture -->
+        <section id="hooks">
+            <h2><span class="number">6</span> SwiftCast Hook 캡처 포인트</h2>
+
+            <p>프록시에서 캡처할 수 있는 데이터와 위치입니다.</p>
+
+            <h3>캡처 가능한 데이터</h3>
+            <table>
+                <tr><th>Data</th><th>Source</th><th>How to Capture</th></tr>
+                <tr>
+                    <td>Request Body</td>
+                    <td>HTTP Request</td>
+                    <td>요청 바디 전체 저장</td>
+                </tr>
+                <tr>
+                    <td>Model</td>
+                    <td><code>request.body.model</code></td>
+                    <td>JSON 파싱</td>
+                </tr>
+                <tr>
+                    <td>Messages</td>
+                    <td><code>request.body.messages</code></td>
+                    <td>JSON 파싱</td>
+                </tr>
+                <tr>
+                    <td>Response Text</td>
+                    <td>SSE <code>text_delta</code></td>
+                    <td>delta.text 누적</td>
+                </tr>
+                <tr>
+                    <td>Thinking Content</td>
+                    <td>SSE <code>thinking_delta</code></td>
+                    <td>delta.thinking 누적</td>
+                </tr>
+                <tr>
+                    <td>Tool Calls</td>
+                    <td>SSE <code>content_block</code> type=tool_use</td>
+                    <td>tool_use 블록 수집</td>
+                </tr>
+                <tr>
+                    <td>Token Usage</td>
+                    <td>SSE <code>message_delta.usage</code></td>
+                    <td>usage 객체 추출</td>
+                </tr>
+                <tr>
+                    <td>Stop Reason</td>
+                    <td>SSE <code>message_delta.delta.stop_reason</code></td>
+                    <td>stop_reason 추출</td>
+                </tr>
+            </table>
+
+            <h3>SSE 파싱 로직</h3>
+            <pre><code>fn parse_sse_event(line: &str) -> Option&lt;ParsedEvent&gt; {
+    if !line.starts_with("data: ") { return None; }
+    let json: Value = serde_json::from_str(&line[6..])?;
+
+    match json["type"].as_str()? {
+        "content_block_start" => {
+            let block_type = json["content_block"]["type"].as_str()?;
+            // "text", "thinking", "tool_use" 구분
+        }
+
+        "content_block_delta" => {
+            match json["delta"]["type"].as_str()? {
+                "text_delta" => {
+                    let text = json["delta"]["text"].as_str()?;
+                    // 텍스트 누적
+                }
+                "thinking_delta" => {
+                    let thinking = json["delta"]["thinking"].as_str()?;
+                    // thinking 누적
+                }
+                "input_json_delta" => {
+                    let partial = json["delta"]["partial_json"].as_str()?;
+                    // tool input JSON 누적
+                }
+            }
+        }
+
+        "message_delta" => {
+            let stop_reason = json["delta"]["stop_reason"].as_str();
+            let usage = &json["usage"];
+            // stop_reason, tokens 저장
+        }
+
+        _ => {}
+    }
+}</code></pre>
+
+            <h3>Enhanced Log Format</h3>
+            <pre><code>{
+  "request_id": "uuid",
+  "session_id": "abc123...",
+  "request": {
+    "timestamp_iso": "2026-01-27T14:30:52Z",
+    "model": "claude-opus-4-5-20251101",
+    "body": {
+      "system": "You are Claude Code...",
+      "tools": [...],
+      "messages": [...]
+    }
+  },
+  "response": {
+    "status_code": 200,
+    "duration_ms": 3200,
+    "stop_reason": "tool_use",        // ← 중요!
+    "input_tokens": 1500,
+    "output_tokens": 800,
+    "content_blocks": [               // ← 상세 정보
+      {"type": "text", "text": "파일을 읽어볼게요"},
+      {"type": "thinking", "thinking": "Let me analyze..."},
+      {"type": "tool_use", "name": "Read", "input": {...}}
+    ],
+    "response_text": "파일을 읽어볼게요"  // ← text만 추출
+  }
+}</code></pre>
+        </section>
+
+        <footer>
+            <p>Last Updated: 2026-01-27</p>
+            <p>
+                References:
+                <a href="https://platform.claude.com/docs/en/api/messages-streaming">Claude API Docs</a> |
+                <a href="https://code.claude.com/docs/en/sub-agents">Claude Code Docs</a> |
+                <a href="https://github.com/Piebald-AI/claude-code-system-prompts">System Prompts</a>
+            </p>
+        </footer>
+    </div>
+</body>
+</html>
