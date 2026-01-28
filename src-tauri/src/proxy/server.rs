@@ -650,7 +650,7 @@ async fn proxy_handler(
         request_body_json,
     );
 
-    // Check for custom task interception (/tasks <name>)
+    // Check for custom task interception (>>swiftcast <name>)
     let intercept_result = state.custom_task_hook.try_intercept(&request_context).await;
     if intercept_result.intercepted {
         tracing::info!(
