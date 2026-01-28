@@ -129,6 +129,130 @@ SwiftCast automatically manages `~/.claude/settings.json`:
 
 ---
 
+## Hook System
+
+SwiftCast includes a powerful hook system for intercepting and modifying Claude API traffic.
+
+### Architecture
+
+```
+Claude Code
+    ↓ API Request
+┌─────────────────────────────────────┐
+│         SwiftCast Proxy             │
+│  ┌───────────────────────────────┐  │
+│  │        HookRegistry           │  │
+│  │  ┌─────────┐ ┌─────────────┐  │  │
+│  │  │Read-Only│ │Modify Hooks │  │  │
+│  │  │ Hooks   │ │             │  │  │
+│  │  └─────────┘ └─────────────┘  │  │
+│  └───────────────────────────────┘  │
+└─────────────────────────────────────┘
+    ↓ Modified Request
+Claude API
+```
+
+### Available Hooks
+
+#### 1. FileLoggerHook (Read-Only)
+
+Logs all API requests and responses to JSON files.
+
+**Log Location:** `~/.sessioncast/logs/<session_id>/`
+
+**File Format:**
+```
+20260128_195442_<request_id>_<seq>_<model>.json
+```
+
+**Logged Data:**
+- Full request body (messages, system prompt, tools)
+- Full response text
+- Token usage (input/output)
+- Timing information
+- Session tracking
+
+**Configuration:**
+| DB Key | Default | Description |
+|--------|---------|-------------|
+| `hooks_enabled` | `true` | Enable/disable all hooks |
+| `hooks_retention_days` | `30` | Log retention period |
+
+#### 2. CompactionInjectorHook (Modify)
+
+Injects custom context during Claude Code's conversation compaction.
+
+**Detection Patterns:**
+- Summarization request: `"Your task is to create a detailed summary"`
+- Compacted conversation: `"This session is being continued from a previous"`
+
+**Configuration:**
+| DB Key | Default | Description |
+|--------|---------|-------------|
+| `compaction_injection_enabled` | `false` | Enable injection |
+| `compaction_summarization_instructions` | `""` | Instructions for summary generation |
+| `compaction_context_injection` | `""` | Context to inject into compacted conversations |
+
+**Example Usage:**
+```sql
+-- Enable compaction injection
+UPDATE config SET value = 'true'
+WHERE key = 'compaction_injection_enabled';
+
+-- Add instructions for summarization
+UPDATE config SET value = '- Always include: This project uses Korean language
+- Remember to preserve TypeScript strict mode preference'
+WHERE key = 'compaction_summarization_instructions';
+
+-- Inject persistent context
+UPDATE config SET value = 'Project Rules:
+- Respond in Korean
+- Use TypeScript strict mode
+- Never modify node_modules'
+WHERE key = 'compaction_context_injection';
+```
+
+### Hook Lifecycle
+
+```
+1. Request received
+      ↓
+2. on_request_before() ────→ Log request start
+      ↓
+3. modify_request_body() ──→ Inject compaction context
+      ↓
+4. Forward to Claude API
+      ↓
+5. Stream response
+      ↓
+6. on_response_complete() ─→ Log complete response
+      ↓
+7. on_request_after() ─────→ Finalize logging
+```
+
+### Extending Hooks
+
+Create custom hooks by implementing the traits:
+
+```rust
+// Read-only hook
+#[async_trait]
+pub trait Hook: Send + Sync {
+    async fn on_request_before(&self, ctx: &RequestContext);
+    async fn on_response_complete(&self, req_ctx: &RequestContext, res_ctx: &ResponseContext);
+    fn name(&self) -> &'static str;
+}
+
+// Modify hook
+#[async_trait]
+pub trait ModifyHook: Send + Sync {
+    async fn modify_request_body(&self, body: &str, ctx: &RequestContext) -> Option<String>;
+    fn name(&self) -> &'static str;
+}
+```
+
+---
+
 ## Tech Stack
 
 | Component | Technology |
@@ -160,6 +284,11 @@ swiftcast/
 ├── src-tauri/             # Backend (Rust)
 │   ├── src/
 │   │   ├── proxy/         # Proxy server (axum + SSE)
+│   │   │   ├── hooks/     # Hook system
+│   │   │   │   ├── file_logger.rs        # Request/response logging
+│   │   │   │   └── compaction_injector.rs # Context injection
+│   │   │   ├── webhook.rs       # External webhook support
+│   │   │   └── step_tracker.rs  # Tool use tracking
 │   │   ├── storage/       # Database (SQLite)
 │   │   ├── commands/      # Tauri commands
 │   │   └── main.rs
