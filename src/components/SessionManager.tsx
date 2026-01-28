@@ -28,12 +28,21 @@ interface ModelInfo {
   name: string;
 }
 
+const ITEMS_PER_PAGE_OPTIONS = [5, 10, 20, 50];
+
 export default function SessionManager() {
   const { t } = useTranslation();
   const [sessions, setSessions] = useState<SessionDetail[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [modelsByProvider, setModelsByProvider] = useState<Record<string, ModelInfo[]>>({});
   const [loading, setLoading] = useState(false);
+
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(10);
+
+  // Search/filter state
+  const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
     loadData();
@@ -129,6 +138,28 @@ export default function SessionManager() {
     return modelsByProvider[account.base_url] || [];
   };
 
+  // Filter sessions by search query
+  const filteredSessions = sessions.filter(session => {
+    if (!searchQuery.trim()) return true;
+    const query = searchQuery.toLowerCase();
+    return (
+      session.session_id.toLowerCase().includes(query) ||
+      session.account_name.toLowerCase().includes(query) ||
+      (session.last_message && session.last_message.toLowerCase().includes(query)) ||
+      (session.model_override && session.model_override.toLowerCase().includes(query))
+    );
+  });
+
+  // Pagination calculations
+  const totalPages = Math.ceil(filteredSessions.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const paginatedSessions = filteredSessions.slice(startIndex, startIndex + itemsPerPage);
+
+  // Reset to page 1 when filter changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, itemsPerPage]);
+
   return (
     <div className="bg-white rounded-lg shadow p-6">
       <div className="flex items-center justify-between mb-4">
@@ -136,6 +167,7 @@ export default function SessionManager() {
           <h2 className="text-lg font-semibold text-gray-900">{t('sessions.title')}</h2>
           <p className="text-sm text-gray-500">
             {t('sessions.activeSessions')}: {sessions.length}
+            {searchQuery && ` (${t('sessions.filtered')}: ${filteredSessions.length})`}
           </p>
         </div>
         <button
@@ -147,13 +179,38 @@ export default function SessionManager() {
         </button>
       </div>
 
-      {sessions.length === 0 ? (
+      {/* Search and Items per page */}
+      <div className="flex items-center gap-3 mb-4">
+        <div className="flex-1">
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder={t('sessions.searchPlaceholder')}
+            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-gray-500">{t('sessions.perPage')}:</span>
+          <select
+            value={itemsPerPage}
+            onChange={(e) => setItemsPerPage(Number(e.target.value))}
+            className="px-2 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+          >
+            {ITEMS_PER_PAGE_OPTIONS.map(n => (
+              <option key={n} value={n}>{n}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {filteredSessions.length === 0 ? (
         <div className="text-center text-gray-500 py-8">
-          {t('sessions.noSessions')}
+          {searchQuery ? t('sessions.noResults') : t('sessions.noSessions')}
         </div>
       ) : (
         <div className="space-y-3">
-          {sessions.map((session) => (
+          {paginatedSessions.map((session) => (
             <div
               key={session.session_id}
               className="border border-gray-200 rounded-lg p-4 hover:bg-gray-50"
@@ -237,6 +294,73 @@ export default function SessionManager() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Pagination Controls */}
+      {filteredSessions.length > 0 && totalPages > 1 && (
+        <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-200">
+          <div className="text-sm text-gray-500">
+            {t('sessions.showing')} {startIndex + 1}-{Math.min(startIndex + itemsPerPage, filteredSessions.length)} {t('sessions.of')} {filteredSessions.length}
+          </div>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setCurrentPage(1)}
+              disabled={currentPage === 1}
+              className="px-2 py-1 text-sm rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {'<<'}
+            </button>
+            <button
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+              disabled={currentPage === 1}
+              className="px-2 py-1 text-sm rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {'<'}
+            </button>
+
+            {/* Page numbers */}
+            {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+              let pageNum;
+              if (totalPages <= 5) {
+                pageNum = i + 1;
+              } else if (currentPage <= 3) {
+                pageNum = i + 1;
+              } else if (currentPage >= totalPages - 2) {
+                pageNum = totalPages - 4 + i;
+              } else {
+                pageNum = currentPage - 2 + i;
+              }
+              return (
+                <button
+                  key={pageNum}
+                  onClick={() => setCurrentPage(pageNum)}
+                  className={`px-3 py-1 text-sm rounded ${
+                    currentPage === pageNum
+                      ? 'bg-blue-500 text-white'
+                      : 'hover:bg-gray-100'
+                  }`}
+                >
+                  {pageNum}
+                </button>
+              );
+            })}
+
+            <button
+              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+              disabled={currentPage === totalPages}
+              className="px-2 py-1 text-sm rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {'>'}
+            </button>
+            <button
+              onClick={() => setCurrentPage(totalPages)}
+              disabled={currentPage === totalPages}
+              className="px-2 py-1 text-sm rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {'>>'}
+            </button>
+          </div>
         </div>
       )}
     </div>
