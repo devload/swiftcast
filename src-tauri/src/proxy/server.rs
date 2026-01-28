@@ -1,7 +1,7 @@
 use super::hooks::{CompactionConfig, CompactionInjectorHook, FileLoggerHook, HookRegistry, RequestContext, ResponseBuilder};
 use super::question_detector::QuestionDetector;
 use super::step_tracker::StepTracker;
-use super::webhook::{AIQuestionData, UsageData, WebhookClient};
+use super::webhook::{AIQuestionData, SessionCompleteData, UsageData, WebhookClient};
 use crate::storage::Database;
 use anyhow::Result;
 use axum::{
@@ -824,12 +824,33 @@ async fn proxy_handler(
                     let db_for_complete = db.clone();
                     let webhook_for_complete = webhook.clone();
                     let session_for_complete = session_id_for_log.clone();
+                    let stop_reason_for_complete = usage.stop_reason.clone();
+                    let usage_input_for_complete = usage.input_tokens;
+                    let usage_output_for_complete = usage.output_tokens;
 
                     tokio::spawn(async move {
                         // Complete current step first
                         if let Some(ref sid) = session_for_complete {
                             if let Some(step_data) = tracker_for_complete.complete_current_step(sid).await {
                                 tracker_for_complete.send_single_update(&db_for_complete, &webhook_for_complete, sid, step_data).await;
+                            }
+
+                            // Send session_complete webhook when stop_reason is "end_turn"
+                            if stop_reason_for_complete.as_deref() == Some("end_turn") {
+                                if let Ok(Some((todo_id, _))) = db_for_complete.get_threadcast_mapping(sid).await {
+                                    let completed_steps = tracker_for_complete.get_completed_steps(sid).await;
+                                    let _ = webhook_for_complete.send_session_complete(
+                                        Some(todo_id),
+                                        sid,
+                                        SessionCompleteData {
+                                            stop_reason: "end_turn".to_string(),
+                                            total_input_tokens: usage_input_for_complete,
+                                            total_output_tokens: usage_output_for_complete,
+                                            duration_ms: 0, // TODO: track actual duration
+                                            completed_steps,
+                                        },
+                                    ).await;
+                                }
                             }
                         }
                     });

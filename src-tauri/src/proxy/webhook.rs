@@ -36,6 +36,15 @@ pub struct StepUpdateData {
     pub tool_name: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionCompleteData {
+    pub stop_reason: String,           // end_turn, tool_use, max_tokens
+    pub total_input_tokens: i64,
+    pub total_output_tokens: i64,
+    pub duration_ms: u64,
+    pub completed_steps: Vec<String>,  // List of completed step types
+}
+
 pub struct WebhookClient {
     client: Client,
     base_url: Arc<RwLock<Option<String>>>,
@@ -137,6 +146,34 @@ impl WebhookClient {
             session_id: session_id.to_string(),
             timestamp: chrono::Utc::now().timestamp(),
             data: serde_json::to_value(&step)?,
+        };
+
+        self.send(&payload).await
+    }
+
+    /// Send session complete to ThreadCast (when stop_reason is "end_turn")
+    pub async fn send_session_complete(
+        &self,
+        todo_id: Option<String>,
+        session_id: &str,
+        data: SessionCompleteData,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if !self.is_enabled().await {
+            return Ok(());
+        }
+
+        tracing::info!(
+            "Sending session_complete: todo={:?}, stop_reason={}",
+            todo_id,
+            data.stop_reason
+        );
+
+        let payload = WebhookPayload {
+            event: "session_complete".to_string(),
+            todo_id,
+            session_id: session_id.to_string(),
+            timestamp: chrono::Utc::now().timestamp(),
+            data: serde_json::to_value(&data)?,
         };
 
         self.send(&payload).await

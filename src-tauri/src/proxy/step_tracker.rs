@@ -10,12 +10,15 @@ use crate::storage::Database;
 pub struct StepTracker {
     /// Current step for each session
     current_steps: Arc<RwLock<HashMap<String, String>>>,
+    /// Completed steps for each session (for session_complete webhook)
+    completed_steps: Arc<RwLock<HashMap<String, Vec<String>>>>,
 }
 
 impl StepTracker {
     pub fn new() -> Self {
         Self {
             current_steps: Arc::new(RwLock::new(HashMap::new())),
+            completed_steps: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -177,6 +180,14 @@ impl StepTracker {
                 &session_id[..std::cmp::min(12, session_id.len())],
                 current_step
             );
+
+            // Track completed step
+            let mut completed = self.completed_steps.write().await;
+            completed
+                .entry(session_id.to_string())
+                .or_default()
+                .push(current_step.clone());
+
             Some(StepUpdateData {
                 step_type: current_step,
                 status: "COMPLETED".to_string(),
@@ -187,6 +198,12 @@ impl StepTracker {
         } else {
             None
         }
+    }
+
+    /// Get list of completed steps for a session
+    pub async fn get_completed_steps(&self, session_id: &str) -> Vec<String> {
+        let completed = self.completed_steps.read().await;
+        completed.get(session_id).cloned().unwrap_or_default()
     }
 
     /// Send a single step update
@@ -211,6 +228,8 @@ impl StepTracker {
     pub async fn clear_session(&self, session_id: &str) {
         let mut steps = self.current_steps.write().await;
         steps.remove(session_id);
+        let mut completed = self.completed_steps.write().await;
+        completed.remove(session_id);
     }
 }
 
@@ -224,6 +243,7 @@ impl Clone for StepTracker {
     fn clone(&self) -> Self {
         Self {
             current_steps: self.current_steps.clone(),
+            completed_steps: self.completed_steps.clone(),
         }
     }
 }
