@@ -525,6 +525,77 @@ pub async fn get_proxy_port(state: State<'_, AppState>) -> Result<u16, String> {
     state.db.get_proxy_port().await.map_err(|e| e.to_string())
 }
 
+// ===== Hook 설정 Commands =====
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct HookConfig {
+    pub hooks_enabled: bool,
+    pub hooks_retention_days: u64,
+    pub compaction_injection_enabled: bool,
+    pub compaction_summarization_instructions: String,
+    pub compaction_context_injection: String,
+}
+
+#[tauri::command]
+pub async fn get_hook_config(state: State<'_, AppState>) -> Result<HookConfig, String> {
+    let hooks_enabled = state.db.get_config("hooks_enabled").await
+        .map_err(|e| e.to_string())?
+        .map(|v| v == "true")
+        .unwrap_or(true);
+
+    let hooks_retention_days = state.db.get_config("hooks_retention_days").await
+        .map_err(|e| e.to_string())?
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(30);
+
+    let compaction_injection_enabled = state.db.get_config("compaction_injection_enabled").await
+        .map_err(|e| e.to_string())?
+        .map(|v| v == "true")
+        .unwrap_or(false);
+
+    let compaction_summarization_instructions = state.db.get_config("compaction_summarization_instructions").await
+        .map_err(|e| e.to_string())?
+        .unwrap_or_default();
+
+    let compaction_context_injection = state.db.get_config("compaction_context_injection").await
+        .map_err(|e| e.to_string())?
+        .unwrap_or_default();
+
+    Ok(HookConfig {
+        hooks_enabled,
+        hooks_retention_days,
+        compaction_injection_enabled,
+        compaction_summarization_instructions,
+        compaction_context_injection,
+    })
+}
+
+#[tauri::command]
+pub async fn set_hook_config(config: HookConfig, state: State<'_, AppState>) -> Result<(), String> {
+    state.db.set_config("hooks_enabled", if config.hooks_enabled { "true" } else { "false" })
+        .await.map_err(|e| e.to_string())?;
+
+    state.db.set_config("hooks_retention_days", &config.hooks_retention_days.to_string())
+        .await.map_err(|e| e.to_string())?;
+
+    state.db.set_config("compaction_injection_enabled", if config.compaction_injection_enabled { "true" } else { "false" })
+        .await.map_err(|e| e.to_string())?;
+
+    state.db.set_config("compaction_summarization_instructions", &config.compaction_summarization_instructions)
+        .await.map_err(|e| e.to_string())?;
+
+    state.db.set_config("compaction_context_injection", &config.compaction_context_injection)
+        .await.map_err(|e| e.to_string())?;
+
+    tracing::info!("Hook config updated: enabled={}, compaction={}", config.hooks_enabled, config.compaction_injection_enabled);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
 // 사용량 관련 명령어
 use crate::storage::database::{UsageLog, AccountUsageStats, ModelUsageStats, DailyUsageStats, SessionUsageStats};
 

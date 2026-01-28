@@ -103,6 +103,10 @@ async fn main() {
             commands::get_active_sessions,
             commands::set_session_config,
             commands::delete_session_config,
+            // Hook 설정
+            commands::get_hook_config,
+            commands::set_hook_config,
+            commands::get_app_version,
         ])
         .setup(|app| {
             // 트레이 메뉴 생성
