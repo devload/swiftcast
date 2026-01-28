@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use super::context::{RequestContext, ResponseContext};
 
-/// Hook trait for intercepting proxy request lifecycle events
+/// Hook trait for intercepting proxy request lifecycle events (read-only)
 #[async_trait]
 pub trait Hook: Send + Sync {
     /// Called before the request is sent to the upstream server
@@ -21,6 +21,21 @@ pub trait Hook: Send + Sync {
 
     /// Called when the entire response is complete
     async fn on_response_complete(&self, req_ctx: &RequestContext, res_ctx: &ResponseContext);
+
+    /// Return the hook name for logging purposes
+    fn name(&self) -> &'static str;
+}
+
+/// Hook trait for modifying request/response content
+#[async_trait]
+pub trait ModifyHook: Send + Sync {
+    /// Modify request body before sending to upstream
+    /// Return Some(modified_body) to modify, None to pass through unchanged
+    async fn modify_request_body(&self, body: &str, ctx: &RequestContext) -> Option<String>;
+
+    /// Modify response text before returning to client
+    /// Return Some(modified_text) to modify, None to pass through unchanged
+    async fn modify_response_text(&self, text: &str, ctx: &RequestContext) -> Option<String>;
 
     /// Return the hook name for logging purposes
     fn name(&self) -> &'static str;

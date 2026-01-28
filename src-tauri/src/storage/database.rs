@@ -94,7 +94,10 @@ impl Database {
                 ('threadcast_webhook_url', 'http://localhost:21000'),
                 ('threadcast_webhook_enabled', 'false'),
                 ('hooks_enabled', 'true'),
-                ('hooks_retention_days', '30')
+                ('hooks_retention_days', '30'),
+                ('compaction_injection_enabled', 'false'),
+                ('compaction_summarization_instructions', ''),
+                ('compaction_context_injection', '')
             "#,
         )
         .execute(&pool)

@@ -61,13 +61,14 @@ impl StepTracker {
         false
     }
 
-    /// Process a tool_use event and return step update if needed
+    /// Process a tool_use event and return step updates if needed
+    /// Returns (previous_step_completed, new_step_in_progress)
     pub async fn process_tool_use(
         &self,
         session_id: &str,
         tool_name: &str,
         tool_input: Option<&serde_json::Value>,
-    ) -> Option<StepUpdateData> {
+    ) -> (Option<StepUpdateData>, Option<StepUpdateData>) {
         // Special handling for Bash commands
         let step_type = if tool_name == "Bash" {
             if Self::is_test_command(tool_input) {
@@ -80,7 +81,10 @@ impl StepTracker {
             Self::tool_to_step_type(tool_name)
         };
 
-        let step_type = step_type?;
+        let step_type = match step_type {
+            Some(s) => s,
+            None => return (None, None),
+        };
 
         // Check if we're already in this step
         let mut steps = self.current_steps.write().await;
@@ -88,16 +92,16 @@ impl StepTracker {
 
         if current == Some(&step_type.to_string()) {
             // Already in this step, just update progress
-            return Some(StepUpdateData {
+            return (None, Some(StepUpdateData {
                 step_type: step_type.to_string(),
                 status: "IN_PROGRESS".to_string(),
                 progress: None,
                 message: Some(format!("Using {}", tool_name)),
                 tool_name: Some(tool_name.to_string()),
-            });
+            }));
         }
 
-        // Step changed
+        // Step changed - complete previous step first
         let previous = current.cloned();
         steps.insert(session_id.to_string(), step_type.to_string());
 
@@ -108,24 +112,91 @@ impl StepTracker {
             step_type
         );
 
-        Some(StepUpdateData {
+        // Create completed update for previous step
+        let completed_update = previous.map(|prev_step| StepUpdateData {
+            step_type: prev_step,
+            status: "COMPLETED".to_string(),
+            progress: Some(100),
+            message: Some("Step completed".to_string()),
+            tool_name: None,
+        });
+
+        // Create in_progress update for new step
+        let new_update = Some(StepUpdateData {
             step_type: step_type.to_string(),
             status: "IN_PROGRESS".to_string(),
             progress: None,
             message: Some(format!("Started {} with {}", step_type.to_lowercase(), tool_name)),
             tool_name: Some(tool_name.to_string()),
-        })
+        });
+
+        (completed_update, new_update)
     }
 
-    /// Send step update webhook if enabled
-    pub async fn send_update(
+    /// Send step update webhooks if enabled
+    /// Sends completed update first (if any), then new step update
+    pub async fn send_updates(
+        &self,
+        db: &Database,
+        webhook: &WebhookClient,
+        session_id: &str,
+        completed_step: Option<StepUpdateData>,
+        new_step: Option<StepUpdateData>,
+    ) {
+        // Get ThreadCast mapping for this session
+        if let Ok(Some((todo_id, _))) = db.get_threadcast_mapping(session_id).await {
+            // Send completed step update first
+            if let Some(completed) = completed_step {
+                tracing::info!("Sending COMPLETED for step: {}", completed.step_type);
+                if let Err(e) = webhook
+                    .send_step_update(Some(todo_id.clone()), session_id, completed)
+                    .await
+                {
+                    tracing::warn!("Failed to send step completed webhook: {}", e);
+                }
+            }
+
+            // Then send new step update
+            if let Some(new_data) = new_step {
+                if let Err(e) = webhook
+                    .send_step_update(Some(todo_id), session_id, new_data)
+                    .await
+                {
+                    tracing::warn!("Failed to send step update webhook: {}", e);
+                }
+            }
+        }
+    }
+
+    /// Complete the current step when session/response ends
+    pub async fn complete_current_step(&self, session_id: &str) -> Option<StepUpdateData> {
+        let mut steps = self.current_steps.write().await;
+        if let Some(current_step) = steps.remove(session_id) {
+            tracing::info!(
+                "STEP COMPLETE (session end): session={} step={}",
+                &session_id[..std::cmp::min(12, session_id.len())],
+                current_step
+            );
+            Some(StepUpdateData {
+                step_type: current_step,
+                status: "COMPLETED".to_string(),
+                progress: Some(100),
+                message: Some("Step completed".to_string()),
+                tool_name: None,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Send a single step update
+    pub async fn send_single_update(
         &self,
         db: &Database,
         webhook: &WebhookClient,
         session_id: &str,
         step_data: StepUpdateData,
     ) {
-        // Get ThreadCast mapping for this session
         if let Ok(Some((todo_id, _))) = db.get_threadcast_mapping(session_id).await {
             if let Err(e) = webhook
                 .send_step_update(Some(todo_id), session_id, step_data)

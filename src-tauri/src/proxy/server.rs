@@ -1,4 +1,4 @@
-use super::hooks::{FileLoggerHook, HookRegistry, RequestContext, ResponseBuilder};
+use super::hooks::{CompactionConfig, CompactionInjectorHook, FileLoggerHook, HookRegistry, RequestContext, ResponseBuilder};
 use super::question_detector::QuestionDetector;
 use super::step_tracker::StepTracker;
 use super::webhook::{AIQuestionData, UsageData, WebhookClient};
@@ -332,6 +332,39 @@ impl ProxyServer {
             });
         }
 
+        // Initialize and register CompactionInjectorHook
+        let compaction_config_path = hooks_log_dir.parent()
+            .unwrap_or(&hooks_log_dir)
+            .join("compaction_config.json");
+        let compaction_injector = CompactionInjectorHook::new(compaction_config_path.clone());
+
+        // Load compaction config from DB or create default
+        let compaction_enabled = self.db.get_config("compaction_injection_enabled").await
+            .ok()
+            .flatten()
+            .map(|v| v == "true")
+            .unwrap_or(false); // Default to disabled
+        let summarization_instructions = self.db.get_config("compaction_summarization_instructions").await
+            .ok()
+            .flatten();
+        let context_injection = self.db.get_config("compaction_context_injection").await
+            .ok()
+            .flatten();
+
+        let config = CompactionConfig {
+            enabled: compaction_enabled,
+            summarization_instructions,
+            context_injection,
+        };
+        let _ = compaction_injector.update_config(config.clone()).await;
+        self.hook_registry.register_modify_hook(Arc::new(compaction_injector)).await;
+
+        tracing::info!(
+            "CompactionInjector configured: enabled={}, config_path={:?}",
+            compaction_enabled,
+            compaction_config_path
+        );
+
         let state = ProxyState {
             db: self.db.clone(),
             client: self.client.clone(),
@@ -595,8 +628,17 @@ async fn proxy_handler(
     // Trigger request_before hook
     state.hook_registry.trigger_request_before(&request_context).await;
 
+    // Apply modify hooks to request body (for compaction injection etc.)
+    let body_str = String::from_utf8_lossy(&body_bytes);
+    let final_body = if let Some(modified_body) = state.hook_registry.apply_request_modifications(&body_str, &request_context).await {
+        tracing::info!("Request body modified by hooks (compaction injection)");
+        bytes::Bytes::from(modified_body)
+    } else {
+        body_bytes
+    };
+
     // 바디 추가 (Content-Length 명시적 설정)
-    let body_vec = body_bytes.to_vec();
+    let body_vec = final_body.to_vec();
     if !body_vec.is_empty() {
         request_builder = request_builder
             .header("content-length", body_vec.len().to_string())
@@ -666,11 +708,12 @@ async fn proxy_handler(
 
                     tokio::spawn(async move {
                         if let Some(ref sid) = session_for_step {
-                            if let Some(step_data) = tracker
+                            let (completed, new_step) = tracker
                                 .process_tool_use(sid, &tool_info.name, tool_info.input.as_ref())
-                                .await
-                            {
-                                tracker.send_update(&db_for_step, &webhook_for_step, sid, step_data).await;
+                                .await;
+
+                            if completed.is_some() || new_step.is_some() {
+                                tracker.send_updates(&db_for_step, &webhook_for_step, sid, completed, new_step).await;
                             }
                         }
                     });
@@ -755,6 +798,21 @@ async fn proxy_handler(
                         }
                         hr.trigger_response_complete(&req_ctx, &res_ctx).await;
                         hr.trigger_request_after(&req_ctx, &res_ctx).await;
+                    });
+
+                    // Complete current step when response ends (usage indicates stream end)
+                    let tracker_for_complete = step_tracker.clone();
+                    let db_for_complete = db.clone();
+                    let webhook_for_complete = webhook.clone();
+                    let session_for_complete = session_id_for_log.clone();
+
+                    tokio::spawn(async move {
+                        // Complete current step first
+                        if let Some(ref sid) = session_for_complete {
+                            if let Some(step_data) = tracker_for_complete.complete_current_step(sid).await {
+                                tracker_for_complete.send_single_update(&db_for_complete, &webhook_for_complete, sid, step_data).await;
+                            }
+                        }
                     });
 
                     tokio::spawn(async move {
