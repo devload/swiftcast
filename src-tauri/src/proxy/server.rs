@@ -1,4 +1,4 @@
-use super::hooks::{CompactionConfig, CompactionInjectorHook, FileLoggerHook, HookRegistry, RequestContext, ResponseBuilder};
+use super::hooks::{CompactionConfig, CompactionInjectorHook, CustomTaskHook, FileLoggerHook, HookRegistry, RequestContext, ResponseBuilder};
 use super::question_detector::QuestionDetector;
 use super::step_tracker::StepTracker;
 use super::webhook::{AIQuestionData, SessionCompleteData, UsageData, WebhookClient};
@@ -253,6 +253,7 @@ pub struct ProxyServer {
     question_detector: QuestionDetector,
     step_tracker: StepTracker,
     hook_registry: HookRegistry,
+    custom_task_hook: Arc<CustomTaskHook>,
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
@@ -264,6 +265,7 @@ struct ProxyState {
     question_detector: QuestionDetector,
     step_tracker: StepTracker,
     hook_registry: HookRegistry,
+    custom_task_hook: Arc<CustomTaskHook>,
     db_task_semaphore: Arc<Semaphore>, // DB 작업 동시 실행 제한
 }
 
@@ -276,6 +278,9 @@ impl ProxyServer {
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
 
+        // Initialize CustomTaskHook with default config path
+        let custom_task_hook = Arc::new(CustomTaskHook::new(CustomTaskHook::default_config_path()));
+
         Self {
             db,
             client,
@@ -283,6 +288,7 @@ impl ProxyServer {
             question_detector: QuestionDetector::new(),
             step_tracker: StepTracker::new(),
             hook_registry: HookRegistry::new(),
+            custom_task_hook,
             shutdown_tx: None,
         }
     }
@@ -379,6 +385,10 @@ impl ProxyServer {
             compaction_config_path
         );
 
+        // Log custom task loading
+        let task_count = self.custom_task_hook.list_tasks().await.len();
+        tracing::info!("CustomTaskHook loaded {} tasks from {:?}", task_count, CustomTaskHook::default_config_path());
+
         let state = ProxyState {
             db: self.db.clone(),
             client: self.client.clone(),
@@ -386,6 +396,7 @@ impl ProxyServer {
             question_detector: self.question_detector.clone(),
             step_tracker: self.step_tracker.clone(),
             hook_registry: self.hook_registry.clone(),
+            custom_task_hook: self.custom_task_hook.clone(),
             db_task_semaphore: Arc::new(Semaphore::new(MAX_CONCURRENT_DB_TASKS)),
         };
 
@@ -638,6 +649,27 @@ async fn proxy_handler(
         path.clone(),
         request_body_json,
     );
+
+    // Check for custom task interception (/tasks <name>)
+    let intercept_result = state.custom_task_hook.try_intercept(&request_context).await;
+    if intercept_result.intercepted {
+        tracing::info!(
+            "CUSTOM TASK INTERCEPTED: {:?} (session: {:?})",
+            intercept_result.task_name,
+            session_id
+        );
+
+        // Generate fake SSE response
+        let sse_response = CustomTaskHook::generate_sse_response(&intercept_result.response_text);
+
+        // Return SSE response
+        return Ok(Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "text/event-stream")
+            .header("cache-control", "no-cache")
+            .body(Body::from(sse_response))
+            .unwrap());
+    }
 
     // Trigger request_before hook
     state.hook_registry.trigger_request_before(&request_context).await;
