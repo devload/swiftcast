@@ -176,6 +176,24 @@ impl Database {
             .execute(&pool)
             .await;
 
+        // 세션별 Hook 설정 테이블
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS session_hooks (
+                session_id TEXT PRIMARY KEY,
+                api_logging_enabled INTEGER DEFAULT 1,
+                compaction_injection_enabled INTEGER DEFAULT 0,
+                compaction_summarization_instructions TEXT,
+                compaction_context_injection TEXT,
+                custom_tasks_enabled INTEGER DEFAULT 1,
+                created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+                updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await?;
+
         // 오래된 데이터 자동 정리
         let db = Self { pool };
         db.cleanup_old_data().await?;
@@ -765,6 +783,87 @@ impl Database {
 
         Ok(rows.iter().map(|row| row.get("session_id")).collect())
     }
+
+    // ===== 세션별 Hook 설정 =====
+
+    /// 세션별 Hook 설정 조회
+    pub async fn get_session_hooks(&self, session_id: &str) -> Result<Option<SessionHookConfig>> {
+        let config = sqlx::query_as::<_, SessionHookConfig>(
+            r#"
+            SELECT session_id, api_logging_enabled, compaction_injection_enabled,
+                   compaction_summarization_instructions, compaction_context_injection,
+                   custom_tasks_enabled, created_at, updated_at
+            FROM session_hooks WHERE session_id = ?
+            "#
+        )
+        .bind(session_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(config)
+    }
+
+    /// 세션별 Hook 설정 저장
+    pub async fn set_session_hooks(&self, config: &SessionHookConfig) -> Result<()> {
+        let now = chrono::Utc::now().timestamp();
+
+        sqlx::query(
+            r#"
+            INSERT INTO session_hooks (
+                session_id, api_logging_enabled, compaction_injection_enabled,
+                compaction_summarization_instructions, compaction_context_injection,
+                custom_tasks_enabled, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(session_id) DO UPDATE SET
+                api_logging_enabled = excluded.api_logging_enabled,
+                compaction_injection_enabled = excluded.compaction_injection_enabled,
+                compaction_summarization_instructions = excluded.compaction_summarization_instructions,
+                compaction_context_injection = excluded.compaction_context_injection,
+                custom_tasks_enabled = excluded.custom_tasks_enabled,
+                updated_at = excluded.updated_at
+            "#,
+        )
+        .bind(&config.session_id)
+        .bind(config.api_logging_enabled)
+        .bind(config.compaction_injection_enabled)
+        .bind(&config.compaction_summarization_instructions)
+        .bind(&config.compaction_context_injection)
+        .bind(config.custom_tasks_enabled)
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// 세션별 Hook 설정 삭제 (시스템 기본값 사용으로 복귀)
+    pub async fn delete_session_hooks(&self, session_id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM session_hooks WHERE session_id = ?")
+            .bind(session_id)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    /// 모든 세션 Hook 설정 조회
+    pub async fn get_all_session_hooks(&self) -> Result<Vec<SessionHookConfig>> {
+        let configs = sqlx::query_as::<_, SessionHookConfig>(
+            r#"
+            SELECT session_id, api_logging_enabled, compaction_injection_enabled,
+                   compaction_summarization_instructions, compaction_context_injection,
+                   custom_tasks_enabled, created_at, updated_at
+            FROM session_hooks
+            ORDER BY updated_at DESC
+            "#
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(configs)
+    }
 }
 
 // 사용량 로그 모델
@@ -814,4 +913,32 @@ pub struct SessionUsageStats {
     pub request_count: i64,
     pub total_input_tokens: i64,
     pub total_output_tokens: i64,
+}
+
+#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize, serde::Deserialize)]
+pub struct SessionHookConfig {
+    pub session_id: String,
+    pub api_logging_enabled: bool,
+    pub compaction_injection_enabled: bool,
+    pub compaction_summarization_instructions: Option<String>,
+    pub compaction_context_injection: Option<String>,
+    pub custom_tasks_enabled: bool,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+impl SessionHookConfig {
+    pub fn new(session_id: String) -> Self {
+        let now = chrono::Utc::now().timestamp();
+        Self {
+            session_id,
+            api_logging_enabled: true,
+            compaction_injection_enabled: false,
+            compaction_summarization_instructions: None,
+            compaction_context_injection: None,
+            custom_tasks_enabled: true,
+            created_at: now,
+            updated_at: now,
+        }
+    }
 }

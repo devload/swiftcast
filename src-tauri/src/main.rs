@@ -107,6 +107,11 @@ async fn main() {
             commands::get_hook_config,
             commands::set_hook_config,
             commands::get_app_version,
+            // 세션별 Hook 설정
+            commands::get_session_hooks,
+            commands::set_session_hooks,
+            commands::delete_session_hooks,
+            commands::get_all_session_hooks,
         ])
         .setup(|app| {
             // 트레이 메뉴 생성

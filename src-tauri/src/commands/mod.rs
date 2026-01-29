@@ -596,6 +596,55 @@ pub fn get_app_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+// ===== 세션별 Hook 설정 Commands =====
+
+use crate::storage::database::SessionHookConfig;
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct SessionHookConfigInput {
+    pub session_id: String,
+    pub api_logging_enabled: bool,
+    pub compaction_injection_enabled: bool,
+    pub compaction_summarization_instructions: Option<String>,
+    pub compaction_context_injection: Option<String>,
+    pub custom_tasks_enabled: bool,
+}
+
+#[tauri::command]
+pub async fn get_session_hooks(session_id: String, state: State<'_, AppState>) -> Result<Option<SessionHookConfig>, String> {
+    state.db.get_session_hooks(&session_id).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn set_session_hooks(config: SessionHookConfigInput, state: State<'_, AppState>) -> Result<(), String> {
+    let now = chrono::Utc::now().timestamp();
+    let hook_config = SessionHookConfig {
+        session_id: config.session_id,
+        api_logging_enabled: config.api_logging_enabled,
+        compaction_injection_enabled: config.compaction_injection_enabled,
+        compaction_summarization_instructions: config.compaction_summarization_instructions,
+        compaction_context_injection: config.compaction_context_injection,
+        custom_tasks_enabled: config.custom_tasks_enabled,
+        created_at: now,
+        updated_at: now,
+    };
+    state.db.set_session_hooks(&hook_config).await.map_err(|e| e.to_string())?;
+    tracing::info!("Session hooks updated for session: {}", hook_config.session_id);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_session_hooks(session_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.db.delete_session_hooks(&session_id).await.map_err(|e| e.to_string())?;
+    tracing::info!("Session hooks deleted for session: {}", session_id);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_all_session_hooks(state: State<'_, AppState>) -> Result<Vec<SessionHookConfig>, String> {
+    state.db.get_all_session_hooks().await.map_err(|e| e.to_string())
+}
+
 // 사용량 관련 명령어
 use crate::storage::database::{UsageLog, AccountUsageStats, ModelUsageStats, DailyUsageStats, SessionUsageStats};
 

@@ -650,8 +650,28 @@ async fn proxy_handler(
         request_body_json,
     );
 
+    // Load session-specific hook configuration (if exists)
+    let session_hooks = if let Some(ref sid) = session_id {
+        state.db.get_session_hooks(sid).await.ok().flatten()
+    } else {
+        None
+    };
+
+    // Check if custom tasks are enabled for this session
+    let custom_tasks_enabled = session_hooks.as_ref()
+        .map(|h| h.custom_tasks_enabled)
+        .unwrap_or(true); // Default: enabled
+
     // Check for custom task interception (>>swiftcast <name>)
-    let intercept_result = state.custom_task_hook.try_intercept(&request_context).await;
+    let intercept_result = if custom_tasks_enabled {
+        state.custom_task_hook.try_intercept(&request_context).await
+    } else {
+        super::hooks::custom_task::InterceptResult {
+            intercepted: false,
+            response_text: String::new(),
+            task_name: None,
+        }
+    };
     if intercept_result.intercepted {
         tracing::info!(
             "CUSTOM TASK INTERCEPTED: {:?} (session: {:?})",
@@ -671,14 +691,30 @@ async fn proxy_handler(
             .unwrap());
     }
 
-    // Trigger request_before hook
-    state.hook_registry.trigger_request_before(&request_context).await;
+    // Check if API logging is enabled for this session
+    let api_logging_enabled = session_hooks.as_ref()
+        .map(|h| h.api_logging_enabled)
+        .unwrap_or(true); // Default: enabled
+
+    // Trigger request_before hook (only if logging enabled for session)
+    if api_logging_enabled {
+        state.hook_registry.trigger_request_before(&request_context).await;
+    }
+
+    // Check if compaction injection is enabled for this session
+    let compaction_enabled = session_hooks.as_ref()
+        .map(|h| h.compaction_injection_enabled)
+        .unwrap_or(false); // Default: disabled (use system setting)
 
     // Apply modify hooks to request body (for compaction injection etc.)
     let body_str = String::from_utf8_lossy(&body_bytes);
-    let final_body = if let Some(modified_body) = state.hook_registry.apply_request_modifications(&body_str, &request_context).await {
-        tracing::info!("Request body modified by hooks (compaction injection)");
-        bytes::Bytes::from(modified_body)
+    let final_body = if compaction_enabled {
+        if let Some(modified_body) = state.hook_registry.apply_request_modifications(&body_str, &request_context).await {
+            tracing::info!("Request body modified by hooks (compaction injection)");
+            bytes::Bytes::from(modified_body)
+        } else {
+            body_bytes
+        }
     } else {
         body_bytes
     };
@@ -733,6 +769,7 @@ async fn proxy_handler(
     let step_tracker = state.step_tracker.clone();
     let hook_registry = state.hook_registry.clone();
     let request_context_for_stream = request_context.clone();
+    let api_logging_enabled_for_stream = api_logging_enabled;
 
     // Create ResponseBuilder for accumulating response data
     let response_builder = ResponseBuilder::new(status.as_u16());
@@ -836,21 +873,24 @@ async fn proxy_handler(
                     let rb_for_webhook = response_builder_for_stream.clone();
 
                     // Trigger hooks with final response when we have usage (stream end indicator)
-                    let hr = hook_registry.clone();
-                    let req_ctx = request_context_for_stream.clone();
-                    let rb_final = response_builder_for_stream.clone();
-                    tokio::spawn(async move {
-                        // Small delay to ensure all text is accumulated
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                        let res_ctx = rb_final.build().await;
-                        if res_ctx.is_success {
-                            hr.trigger_request_success(&req_ctx, &res_ctx).await;
-                        } else {
-                            hr.trigger_request_failed(&req_ctx, &res_ctx).await;
-                        }
-                        hr.trigger_response_complete(&req_ctx, &res_ctx).await;
-                        hr.trigger_request_after(&req_ctx, &res_ctx).await;
-                    });
+                    // Only if API logging is enabled for this session
+                    if api_logging_enabled_for_stream {
+                        let hr = hook_registry.clone();
+                        let req_ctx = request_context_for_stream.clone();
+                        let rb_final = response_builder_for_stream.clone();
+                        tokio::spawn(async move {
+                            // Small delay to ensure all text is accumulated
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            let res_ctx = rb_final.build().await;
+                            if res_ctx.is_success {
+                                hr.trigger_request_success(&req_ctx, &res_ctx).await;
+                            } else {
+                                hr.trigger_request_failed(&req_ctx, &res_ctx).await;
+                            }
+                            hr.trigger_response_complete(&req_ctx, &res_ctx).await;
+                            hr.trigger_request_after(&req_ctx, &res_ctx).await;
+                        });
+                    }
 
                     // Complete current step when response ends (usage indicates stream end)
                     let tracker_for_complete = step_tracker.clone();
@@ -913,31 +953,30 @@ async fn proxy_handler(
                             tracing::error!("Failed to log usage: {}", e);
                         }
 
-                        // Send webhook to ThreadCast if session has ThreadCast mapping
+                        // Send webhook to ThreadCast unconditionally
+                        // ThreadCast will look up the session_id -> todo_id mapping
                         if let Some(ref sid) = session_id_clone {
-                            if let Ok(Some((todo_id, _))) = db_clone.get_threadcast_mapping(sid).await {
-                                // Small delay to ensure response text is fully accumulated
-                                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                            // Small delay to ensure response text is fully accumulated
+                            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-                                // Get response summary (first 200 chars)
-                                let res_ctx = rb_for_webhook.build().await;
-                                let response_summary = if res_ctx.response_text.is_empty() {
-                                    None
-                                } else {
-                                    Some(res_ctx.response_text.chars().take(200).collect::<String>())
-                                };
+                            // Get response summary (first 200 chars)
+                            let res_ctx = rb_for_webhook.build().await;
+                            let response_summary = if res_ctx.response_text.is_empty() {
+                                None
+                            } else {
+                                Some(res_ctx.response_text.chars().take(200).collect::<String>())
+                            };
 
-                                let _ = webhook_clone.send_usage(
-                                    Some(todo_id),
-                                    sid,
-                                    UsageData {
-                                        model: model_clone,
-                                        input_tokens: usage_input,
-                                        output_tokens: usage_output,
-                                        response_summary,
-                                    },
-                                ).await;
-                            }
+                            let _ = webhook_clone.send_usage(
+                                None,  // ThreadCast will resolve todo_id from session_id
+                                sid,
+                                UsageData {
+                                    model: model_clone,
+                                    input_tokens: usage_input,
+                                    output_tokens: usage_output,
+                                    response_summary,
+                                },
+                            ).await;
                         }
                     });
                 }
