@@ -1071,6 +1071,34 @@ async fn register_threadcast_mapping(
     {
         Ok(_) => {
             tracing::info!("ThreadCast mapping registered successfully");
+
+            // Forward mapping to ThreadCast webhook
+            let webhook_url = state.db.get_config("threadcast_webhook_url").await
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| "http://localhost:21000".to_string());
+
+            let forward_url = format!("{}/api/webhooks/session-mapping", webhook_url);
+            let forward_payload = serde_json::json!({
+                "session_id": payload.session_id,
+                "args": format!("--todo-id={}", payload.todo_id)
+            });
+
+            let client = reqwest::Client::new();
+            match client.post(&forward_url)
+                .json(&forward_payload)
+                .timeout(std::time::Duration::from_secs(5))
+                .send()
+                .await
+            {
+                Ok(resp) => {
+                    tracing::info!("Forwarded mapping to ThreadCast: status={}", resp.status());
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to forward mapping to ThreadCast: {}", e);
+                }
+            }
+
             Ok(axum::Json(serde_json::json!({
                 "success": true,
                 "session_id": payload.session_id,
