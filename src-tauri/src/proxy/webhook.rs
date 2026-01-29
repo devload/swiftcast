@@ -18,6 +18,8 @@ pub struct UsageData {
     pub model: String,
     pub input_tokens: i64,
     pub output_tokens: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_summary: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

@@ -833,6 +833,7 @@ async fn proxy_handler(
                     let webhook_clone = webhook.clone();
                     let usage_input = usage.input_tokens;
                     let usage_output = usage.output_tokens;
+                    let rb_for_webhook = response_builder_for_stream.clone();
 
                     // Trigger hooks with final response when we have usage (stream end indicator)
                     let hr = hook_registry.clone();
@@ -915,6 +916,17 @@ async fn proxy_handler(
                         // Send webhook to ThreadCast if session has ThreadCast mapping
                         if let Some(ref sid) = session_id_clone {
                             if let Ok(Some((todo_id, _))) = db_clone.get_threadcast_mapping(sid).await {
+                                // Small delay to ensure response text is fully accumulated
+                                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+                                // Get response summary (first 200 chars)
+                                let res_ctx = rb_for_webhook.build().await;
+                                let response_summary = if res_ctx.response_text.is_empty() {
+                                    None
+                                } else {
+                                    Some(res_ctx.response_text.chars().take(200).collect::<String>())
+                                };
+
                                 let _ = webhook_clone.send_usage(
                                     Some(todo_id),
                                     sid,
@@ -922,6 +934,7 @@ async fn proxy_handler(
                                         model: model_clone,
                                         input_tokens: usage_input,
                                         output_tokens: usage_output,
+                                        response_summary,
                                     },
                                 ).await;
                             }
