@@ -134,19 +134,19 @@ impl CustomTaskHook {
         tasks.values().cloned().collect()
     }
 
-    /// Check if message contains >>swiftcast command and extract task name
+    /// Check if message STARTS with >>swiftcast command and extract task name
     fn parse_task_command(message: &str) -> Option<(String, String)> {
-        // Look for >>swiftcast <name> pattern
-        let patterns = [">>swiftcast "];
-        for pattern in patterns {
-            if let Some(pos) = message.find(pattern) {
-                let after = &message[pos + pattern.len()..];
-                // Extract task name (first word)
-                let task_name = after.split_whitespace().next()?;
-                // Extract remaining args
-                let args = after[task_name.len()..].trim().to_string();
-                return Some((task_name.to_string(), args));
-            }
+        // Only trigger if message starts with >>swiftcast (after trimming whitespace)
+        let trimmed = message.trim_start();
+        let pattern = ">>swiftcast ";
+
+        if trimmed.starts_with(pattern) {
+            let after = &trimmed[pattern.len()..];
+            // Extract task name (first word)
+            let task_name = after.split_whitespace().next()?;
+            // Extract remaining args
+            let args = after[task_name.len()..].trim().to_string();
+            return Some((task_name.to_string(), args));
         }
         None
     }
@@ -466,18 +466,27 @@ mod tests {
 
     #[test]
     fn test_parse_task_command() {
+        // Basic command
         assert_eq!(
             CustomTaskHook::parse_task_command(">>swiftcast build"),
             Some(("build".to_string(), "".to_string()))
         );
+        // Command with args
         assert_eq!(
             CustomTaskHook::parse_task_command(">>swiftcast deploy prod"),
             Some(("deploy".to_string(), "prod".to_string()))
         );
+        // With leading whitespace (should work)
         assert_eq!(
-            CustomTaskHook::parse_task_command("hello >>swiftcast test arg1 arg2"),
+            CustomTaskHook::parse_task_command("  >>swiftcast test arg1 arg2"),
             Some(("test".to_string(), "arg1 arg2".to_string()))
         );
+        // Command in middle of message (should NOT work)
+        assert_eq!(
+            CustomTaskHook::parse_task_command("hello >>swiftcast test"),
+            None
+        );
+        // No command
         assert_eq!(
             CustomTaskHook::parse_task_command("no task here"),
             None
