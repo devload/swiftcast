@@ -434,10 +434,12 @@ data: {{"type":"content_block_delta","index":0,"delta":{{"type":"text_delta","te
 data: {"type":"content_block_stop","index":0}"#.to_string());
 
         // message_delta
+        // Use stop_reason: null to avoid triggering session_complete webhook
+        // "end_turn" would cause ThreadCast to think the session is complete
         let output_tokens = text.len() / 4; // Rough estimate
         events.push(format!(
             r#"event: message_delta
-data: {{"type":"message_delta","delta":{{"stop_reason":"end_turn","stop_sequence":null}},"usage":{{"output_tokens":{}}}}}"#,
+data: {{"type":"message_delta","delta":{{"stop_reason":null,"stop_sequence":null}},"usage":{{"output_tokens":{}}}}}"#,
             output_tokens
         ));
 
