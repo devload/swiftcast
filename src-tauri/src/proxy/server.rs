@@ -995,11 +995,47 @@ async fn proxy_handler(
 #[derive(Debug, serde::Deserialize)]
 struct ThreadcastMappingRequest {
     session_id: String,
-    todo_id: String,
+    #[serde(default)]
+    todo_id: Option<String>,
     mission_id: Option<String>,
+    // Alternative format: args string like "--todo-id=XXX"
+    #[serde(default)]
+    args: Option<String>,
+    // Optional fields from TaskContext format
+    #[serde(default)]
+    path: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
+}
+
+impl ThreadcastMappingRequest {
+    /// Extract todo_id from either direct field or args string
+    fn get_todo_id(&self) -> Option<String> {
+        // Direct todo_id takes precedence
+        if let Some(ref tid) = self.todo_id {
+            if !tid.is_empty() {
+                return Some(tid.clone());
+            }
+        }
+        // Parse from args: "--todo-id=XXX" or "--todo-id XXX"
+        if let Some(ref args) = self.args {
+            // Try --todo-id=VALUE format
+            if let Some(pos) = args.find("--todo-id=") {
+                let start = pos + 10; // len of "--todo-id="
+                let rest = &args[start..];
+                let end = rest.find(' ').unwrap_or(rest.len());
+                let todo_id = rest[..end].trim().to_string();
+                if !todo_id.is_empty() {
+                    return Some(todo_id);
+                }
+            }
+        }
+        None
+    }
 }
 
 /// Handle ThreadCast mapping from proxy_handler
+/// Accepts both direct format { session_id, todo_id } and args format { session_id, args: "--todo-id=XXX" }
 async fn handle_threadcast_mapping_internal(
     state: ProxyState,
     req: Request,
@@ -1014,17 +1050,26 @@ async fn handle_threadcast_mapping_internal(
             StatusCode::BAD_REQUEST
         })?;
 
+    // Extract todo_id from either direct field or args
+    let todo_id = match payload.get_todo_id() {
+        Some(tid) => tid,
+        None => {
+            tracing::warn!("ThreadCast mapping missing todo_id: session={}", &payload.session_id[..std::cmp::min(12, payload.session_id.len())]);
+            return Err(StatusCode::BAD_REQUEST);
+        }
+    };
+
     tracing::info!(
         "Registering ThreadCast mapping: session={} -> todo={}",
         &payload.session_id[..std::cmp::min(12, payload.session_id.len())],
-        payload.todo_id
+        todo_id
     );
 
     match state
         .db
         .save_threadcast_mapping(
             &payload.session_id,
-            &payload.todo_id,
+            &todo_id,
             payload.mission_id.as_deref(),
         )
         .await
@@ -1034,7 +1079,7 @@ async fn handle_threadcast_mapping_internal(
             let body = serde_json::json!({
                 "success": true,
                 "session_id": payload.session_id,
-                "todo_id": payload.todo_id
+                "todo_id": todo_id
             });
             Ok(Response::builder()
                 .status(StatusCode::OK)
@@ -1050,21 +1095,31 @@ async fn handle_threadcast_mapping_internal(
 }
 
 /// Register ThreadCast session -> todo mapping
+/// Accepts both direct format { session_id, todo_id } and args format { session_id, args: "--todo-id=XXX" }
 async fn register_threadcast_mapping(
     State(state): State<ProxyState>,
     axum::Json(payload): axum::Json<ThreadcastMappingRequest>,
 ) -> Result<axum::Json<serde_json::Value>, StatusCode> {
+    // Extract todo_id from either direct field or args
+    let todo_id = match payload.get_todo_id() {
+        Some(tid) => tid,
+        None => {
+            tracing::warn!("ThreadCast mapping missing todo_id: session={}", &payload.session_id[..std::cmp::min(12, payload.session_id.len())]);
+            return Err(StatusCode::BAD_REQUEST);
+        }
+    };
+
     tracing::info!(
         "Registering ThreadCast mapping: session={} -> todo={}",
         &payload.session_id[..std::cmp::min(12, payload.session_id.len())],
-        payload.todo_id
+        todo_id
     );
 
     match state
         .db
         .save_threadcast_mapping(
             &payload.session_id,
-            &payload.todo_id,
+            &todo_id,
             payload.mission_id.as_deref(),
         )
         .await
@@ -1081,7 +1136,7 @@ async fn register_threadcast_mapping(
             let forward_url = format!("{}/api/webhooks/session-mapping", webhook_url);
             let forward_payload = serde_json::json!({
                 "session_id": payload.session_id,
-                "args": format!("--todo-id={}", payload.todo_id)
+                "args": format!("--todo-id={}", todo_id)
             });
 
             let client = reqwest::Client::new();
@@ -1102,7 +1157,7 @@ async fn register_threadcast_mapping(
             Ok(axum::Json(serde_json::json!({
                 "success": true,
                 "session_id": payload.session_id,
-                "todo_id": payload.todo_id
+                "todo_id": todo_id
             })))
         }
         Err(e) => {
