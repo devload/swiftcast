@@ -129,6 +129,81 @@ SwiftCast automatically manages `~/.claude/settings.json`:
 
 ---
 
+## Custom Tasks
+
+Execute custom commands by intercepting Claude Code messages.
+
+### How It Works
+
+When a message **starts with** `>>swiftcast <task_name>`, SwiftCast:
+1. Intercepts the request (doesn't send to Claude)
+2. Executes the registered task
+3. Returns the result as a fake Claude response
+
+### Task Configuration
+
+Create `~/.sessioncast/tasks.json`:
+
+```json
+[
+  {
+    "name": "build",
+    "description": "Build the project",
+    "task_type": "shell",
+    "command": "npm run build",
+    "working_dir": "/path/to/project"
+  },
+  {
+    "name": "status",
+    "description": "Check git status",
+    "task_type": "shell",
+    "command": "git status"
+  },
+  {
+    "name": "register_session",
+    "description": "Register session with ThreadCast",
+    "task_type": "http",
+    "url": "http://localhost:32080/_swiftcast/threadcast/mapping",
+    "http_method": "POST"
+  }
+]
+```
+
+### Task Types
+
+| Type | Description | Required Fields |
+|------|-------------|-----------------|
+| `shell` | Execute shell command | `command` |
+| `http` | Make HTTP request | `url`, `http_method` |
+| `read_file` | Read file contents | `file_path` |
+
+### Placeholders
+
+Use in `command`, `url`, or `file_path`:
+- `{session_id}` - Current Claude session ID
+- `{args}` - Arguments passed to the task
+- `{model}` - Model being used
+- `{path}` - Request path
+
+### Usage
+
+```
+>>swiftcast list                    # List all tasks
+>>swiftcast reload                  # Reload tasks from file
+>>swiftcast build                   # Run build task
+>>swiftcast deploy --env=production # Run with arguments
+```
+
+### Detection Rules
+
+| Message | Triggers? |
+|---------|-----------|
+| `>>swiftcast build` | ✅ Yes |
+| `  >>swiftcast build` | ✅ Yes (leading whitespace OK) |
+| `Please >>swiftcast build` | ❌ No (not at start) |
+
+---
+
 ## Hook System
 
 SwiftCast includes a powerful hook system for intercepting and modifying Claude API traffic.
@@ -211,6 +286,28 @@ UPDATE config SET value = 'Project Rules:
 - Never modify node_modules'
 WHERE key = 'compaction_context_injection';
 ```
+
+### Session-Level Hooks
+
+Override system settings for specific sessions:
+
+```bash
+# Set session hooks
+curl -X POST http://localhost:32080/_swiftcast/session-hooks \
+  -H "Content-Type: application/json" \
+  -d '{
+    "session_id": "abc123...",
+    "api_logging_enabled": true,
+    "compaction_injection_enabled": false,
+    "custom_tasks_enabled": true
+  }'
+```
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `api_logging_enabled` | bool | `true` | Log API requests/responses |
+| `compaction_injection_enabled` | bool | `false` | Inject context into compaction |
+| `custom_tasks_enabled` | bool | `true` | Allow `>>swiftcast` commands |
 
 ### Hook Lifecycle
 
