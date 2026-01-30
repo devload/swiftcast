@@ -10,7 +10,10 @@ A comprehensive guide to using SwiftCast for AI provider switching and usage mon
 4. [Session Management](#session-management)
 5. [Usage Monitoring](#usage-monitoring)
 6. [Settings](#settings)
-7. [Troubleshooting](#troubleshooting)
+7. [Custom Tasks](#custom-tasks)
+8. [Hook Configuration](#hook-configuration)
+9. [ThreadCast Integration](#threadcast-integration)
+10. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -256,6 +259,239 @@ If not found, add accounts manually with your API key.
 Sessions only appear after:
 - At least one request through the proxy
 - Activity within the last 24 hours
+
+---
+
+## Custom Tasks
+
+Custom Tasks allow you to intercept Claude Code messages and execute custom commands.
+
+### How It Works
+
+When a message **starts with** `>>swiftcast <task_name>`, SwiftCast:
+1. Intercepts the request (doesn't send to Claude)
+2. Executes the registered task
+3. Returns the result as a fake Claude response
+
+### Task Configuration File
+
+Tasks are defined in `~/.sessioncast/tasks.json`:
+
+```json
+[
+  {
+    "name": "build",
+    "description": "Build the project",
+    "task_type": "shell",
+    "command": "npm run build",
+    "working_dir": "/path/to/project"
+  },
+  {
+    "name": "status",
+    "description": "Check git status",
+    "task_type": "shell",
+    "command": "git status"
+  },
+  {
+    "name": "register_session",
+    "description": "Register session with ThreadCast",
+    "task_type": "http",
+    "url": "http://localhost:32080/_swiftcast/threadcast/mapping",
+    "http_method": "POST"
+  }
+]
+```
+
+### Task Types
+
+| Type | Description | Required Fields |
+|------|-------------|-----------------|
+| `shell` | Execute shell command | `command` |
+| `http` | Make HTTP request | `url`, `http_method` |
+| `read_file` | Read file contents | `file_path` |
+
+### Task Definition Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Task name (used in `>>swiftcast <name>`) |
+| `description` | string | Description shown in results |
+| `task_type` | string | `shell`, `http`, or `read_file` |
+| `command` | string | Shell command to execute |
+| `working_dir` | string | Working directory for shell commands |
+| `url` | string | HTTP endpoint URL |
+| `http_method` | string | `GET` or `POST` |
+| `file_path` | string | Path to file to read |
+| `env` | object | Environment variables to set |
+
+### Placeholders
+
+Use these placeholders in `command`, `url`, or `file_path`:
+
+| Placeholder | Description |
+|-------------|-------------|
+| `{session_id}` | Current Claude session ID |
+| `{path}` | Request path |
+| `{model}` | Model being used |
+| `{args}` | Arguments passed to the task |
+
+### Environment Variables
+
+Shell tasks automatically receive these environment variables:
+
+| Variable | Description |
+|----------|-------------|
+| `SWIFTCAST_SESSION_ID` | Current session ID |
+| `SWIFTCAST_PATH` | Request path |
+| `SWIFTCAST_MODEL` | Model name |
+| `SWIFTCAST_ARGS` | Task arguments |
+
+### Usage Examples
+
+```
+# List all available tasks
+>>swiftcast list
+
+# Reload tasks from config file
+>>swiftcast reload
+
+# Run a task
+>>swiftcast build
+
+# Run a task with arguments
+>>swiftcast deploy --env=production
+
+# Register session with ThreadCast
+>>swiftcast register_session --todo-id=123
+```
+
+### Detection Rules
+
+| Message | Triggers? |
+|---------|-----------|
+| `>>swiftcast build` | ✅ Yes |
+| `  >>swiftcast build` | ✅ Yes (leading whitespace OK) |
+| `Please >>swiftcast build` | ❌ No (not at start) |
+| `run >>swiftcast build` | ❌ No (not at start) |
+
+---
+
+## Hook Configuration
+
+Hooks allow you to customize SwiftCast behavior per-session or system-wide.
+
+### System-Wide Hooks
+
+Configure in SwiftCast Settings:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| Hooks Enabled | `true` | Enable/disable all hooks |
+| Retention Days | `30` | Days to keep hook logs |
+| Compaction Injection | `false` | Inject context into compaction requests |
+
+### Session-Level Hooks
+
+Override system settings for specific sessions via API:
+
+```bash
+# Set session hooks
+curl -X POST http://localhost:32080/_swiftcast/session-hooks \
+  -H "Content-Type: application/json" \
+  -d '{
+    "session_id": "abc123...",
+    "api_logging_enabled": true,
+    "compaction_injection_enabled": false,
+    "custom_tasks_enabled": true
+  }'
+
+# Get session hooks
+curl http://localhost:32080/_swiftcast/session-hooks/abc123...
+
+# Delete session hooks (revert to system defaults)
+curl -X DELETE http://localhost:32080/_swiftcast/session-hooks/abc123...
+```
+
+### Hook Settings
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `api_logging_enabled` | bool | `true` | Log API requests/responses |
+| `compaction_injection_enabled` | bool | `false` | Inject context into compaction |
+| `compaction_summarization_instructions` | string | `""` | Custom summarization instructions |
+| `compaction_context_injection` | string | `""` | Context to inject |
+| `custom_tasks_enabled` | bool | `true` | Allow `>>swiftcast` commands |
+
+### Use Cases
+
+**Disable logging for sensitive sessions:**
+```json
+{
+  "session_id": "sensitive-session",
+  "api_logging_enabled": false
+}
+```
+
+**Enable compaction injection for specific project:**
+```json
+{
+  "session_id": "project-session",
+  "compaction_injection_enabled": true,
+  "compaction_context_injection": "Always use TypeScript strict mode"
+}
+```
+
+**Disable custom tasks for production:**
+```json
+{
+  "session_id": "prod-session",
+  "custom_tasks_enabled": false
+}
+```
+
+---
+
+## ThreadCast Integration
+
+SwiftCast integrates with ThreadCast for session-to-task mapping.
+
+### Session Mapping
+
+Register a session with a ThreadCast todo:
+
+```bash
+# Direct format
+curl -X POST http://localhost:32080/_swiftcast/threadcast/mapping \
+  -H "Content-Type: application/json" \
+  -d '{
+    "session_id": "abc123...",
+    "todo_id": "todo-456"
+  }'
+
+# Args format (from custom task)
+curl -X POST http://localhost:32080/_swiftcast/threadcast/mapping \
+  -H "Content-Type: application/json" \
+  -d '{
+    "session_id": "abc123...",
+    "args": "--todo-id=todo-456"
+  }'
+```
+
+### Webhook Events
+
+When ThreadCast webhook is enabled, SwiftCast sends events:
+
+| Event | Trigger | Data |
+|-------|---------|------|
+| `session_complete` | `stop_reason: "end_turn"` | session_id, todo_id, tokens |
+| `step_progress` | Tool use detected | step info, status |
+| `ai_question` | AI asks question | question, options |
+
+### Webhook Configuration
+
+Configure in SwiftCast Settings:
+- **Webhook URL**: `http://localhost:21000` (default)
+- **Webhook Enabled**: Toggle on/off
 
 ---
 
