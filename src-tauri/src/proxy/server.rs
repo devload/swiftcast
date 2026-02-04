@@ -143,6 +143,48 @@ fn override_model_in_body(body: &[u8], new_model: &str) -> (bytes::Bytes, Reques
     }
 }
 
+// Non-Anthropic 백엔드를 위해 thinking 관련 파라미터 제거
+fn strip_thinking_params(body: &[u8]) -> bytes::Bytes {
+    if let Ok(mut json) = serde_json::from_slice::<serde_json::Value>(body) {
+        let mut modified = false;
+
+        // thinking 파라미터 제거 (extended thinking)
+        if json.get("thinking").is_some() {
+            json.as_object_mut().map(|obj| obj.remove("thinking"));
+            modified = true;
+        }
+
+        // betas 배열에서 thinking 관련 항목 제거
+        if let Some(betas) = json.get_mut("betas").and_then(|v| v.as_array_mut()) {
+            let original_len = betas.len();
+            betas.retain(|b| {
+                b.as_str().map(|s| !s.contains("thinking")).unwrap_or(true)
+            });
+            if betas.len() != original_len {
+                modified = true;
+            }
+        }
+
+        // metadata에서 thinking 관련 필드 제거
+        if let Some(metadata) = json.get_mut("metadata").and_then(|v| v.as_object_mut()) {
+            if metadata.remove("thinking").is_some() {
+                modified = true;
+            }
+        }
+
+        if modified {
+            tracing::info!("STRIP THINKING: Removed thinking params for non-Anthropic backend");
+            if let Ok(new_body) = serde_json::to_vec(&json) {
+                return bytes::Bytes::from(new_body);
+            }
+        }
+
+        bytes::Bytes::copy_from_slice(body)
+    } else {
+        bytes::Bytes::copy_from_slice(body)
+    }
+}
+
 fn parse_usage_from_sse(data: &str) -> Option<UsageInfo> {
     // SSE 이벤트에서 usage 정보 추출
     // event: message_delta 또는 message_stop에 usage가 포함됨
@@ -709,7 +751,7 @@ async fn proxy_handler(
 
     // Apply modify hooks to request body (for compaction injection etc.)
     let body_str = String::from_utf8_lossy(&body_bytes);
-    let final_body = if compaction_enabled {
+    let modified_body = if compaction_enabled {
         if let Some(modified_body) = state.hook_registry.apply_request_modifications(&body_str, &request_context).await {
             tracing::info!("Request body modified by hooks (compaction injection)");
             bytes::Bytes::from(modified_body)
@@ -718,6 +760,13 @@ async fn proxy_handler(
         }
     } else {
         body_bytes
+    };
+
+    // Non-Anthropic 백엔드일 경우 thinking 파라미터 제거
+    let final_body = if !is_anthropic {
+        strip_thinking_params(&modified_body)
+    } else {
+        modified_body
     };
 
     // 바디 추가 (Content-Length 명시적 설정)
@@ -733,14 +782,49 @@ async fn proxy_handler(
         .send()
         .await
         .map_err(|e| {
-            tracing::error!("Proxy request failed: {}", e);
+            tracing::error!(
+                "PROXY REQUEST FAILED: {} | Target: {} | Account: {} | Session: {:?} | Error: {}",
+                method.as_str(),
+                target_url,
+                account.name,
+                session_id,
+                e
+            );
             StatusCode::BAD_GATEWAY
         })?;
 
-    tracing::info!("PROXY RESPONSE: {}", response.status());
+    let response_status = response.status();
+
+    // 에러 응답인 경우 상세 로깅 (응답 바디 포함)
+    if !response_status.is_success() {
+        // 에러 응답은 바디 전체를 읽어서 로깅
+        let error_body = response.bytes().await.unwrap_or_default();
+        let error_text = String::from_utf8_lossy(&error_body);
+
+        tracing::error!(
+            "PROXY RESPONSE ERROR: {} {} | Target: {} | Account: {} | Session: {:?} | Body: {}",
+            response_status.as_u16(),
+            response_status.canonical_reason().unwrap_or("Unknown"),
+            target_url,
+            account.name,
+            session_id,
+            if error_text.len() > 500 {
+                format!("{}...(truncated)", &error_text[..500])
+            } else {
+                error_text.to_string()
+            }
+        );
+
+        // 에러 응답 직접 반환
+        let mut builder = Response::builder().status(response_status.as_u16());
+        builder = builder.header("content-type", "application/json");
+        return Ok(builder.body(Body::from(error_body)).unwrap());
+    }
+
+    tracing::info!("PROXY RESPONSE: {}", response_status);
 
     // 응답 상태 및 헤더
-    let status = response.status();
+    let status = response_status;
 
     // 응답 헤더 전달
     let mut builder = Response::builder().status(status.as_u16());
