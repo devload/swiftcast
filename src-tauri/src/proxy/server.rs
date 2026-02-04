@@ -375,6 +375,7 @@ impl ProxyServer {
             enabled: compaction_enabled,
             summarization_instructions,
             context_injection,
+            context_providers_enabled: true, // Enable external context providers by default
         };
         let _ = compaction_injector.update_config(config.clone()).await;
         self.hook_registry.register_modify_hook(Arc::new(compaction_injector)).await;

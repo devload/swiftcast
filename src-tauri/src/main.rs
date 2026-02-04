@@ -23,8 +23,40 @@ pub struct AppState {
 
 #[tokio::main]
 async fn main() {
-    // 로깅 초기화
-    tracing_subscriber::fmt::init();
+    // 로깅 초기화 (콘솔 + 파일)
+    let log_dir = dirs::config_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("com.swiftcast.app")
+        .join("logs");
+
+    // 로그 디렉토리 생성
+    let _ = std::fs::create_dir_all(&log_dir);
+
+    // 파일 로거 설정 (일별 회전)
+    let file_appender = tracing_appender::rolling::daily(&log_dir, "swiftcast.log");
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+
+    // 콘솔 + 파일 로깅
+    use tracing_subscriber::prelude::*;
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(true)
+                .with_target(false)
+        )
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_target(true)
+                .with_writer(non_blocking)
+        )
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+        )
+        .init();
+
+    tracing::info!("SwiftCast starting... Log file: {:?}", log_dir.join("swiftcast.log"));
 
     // 데이터베이스 초기화
     let db = match Database::init().await {
