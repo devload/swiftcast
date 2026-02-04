@@ -37,3 +37,4 @@ docs_backup/
 
 # OS
 Thumbs.db
+litellm_config.yaml
