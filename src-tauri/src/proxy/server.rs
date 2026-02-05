@@ -143,6 +143,64 @@ fn override_model_in_body(body: &[u8], new_model: &str) -> (bytes::Bytes, Reques
     }
 }
 
+// 에러 응답을 사용자 친화적으로 포맷팅
+fn format_error_response(
+    status_code: u16,
+    error_body: &[u8],
+    account_name: &str,
+    target_url: &str,
+) -> bytes::Bytes {
+    let error_text = String::from_utf8_lossy(error_body);
+
+    // 원본 에러 메시지 추출 시도
+    let (error_type, error_message) = if let Ok(json) = serde_json::from_slice::<serde_json::Value>(error_body) {
+        let err_type = json.get("error")
+            .and_then(|e| e.get("type"))
+            .and_then(|t| t.as_str())
+            .unwrap_or("unknown_error");
+        let err_msg = json.get("error")
+            .and_then(|e| e.get("message"))
+            .and_then(|m| m.as_str())
+            .unwrap_or(&error_text);
+        (err_type.to_string(), err_msg.to_string())
+    } else {
+        ("unknown_error".to_string(), error_text.to_string())
+    };
+
+    // 에러 타입별 이모지와 설명
+    let (emoji, description) = match error_type.as_str() {
+        "overloaded_error" => ("⚠️", "API 서버가 과부하 상태입니다. 잠시 후 다시 시도해주세요."),
+        "rate_limit_error" => ("🚫", "요청 한도를 초과했습니다. 잠시 기다려주세요."),
+        "authentication_error" => ("🔐", "인증에 실패했습니다. API 키를 확인해주세요."),
+        "invalid_request_error" => ("❌", "잘못된 요청입니다."),
+        "api_error" => ("💥", "API 서버 오류가 발생했습니다."),
+        "connection_error" => ("🔌", "서버에 연결할 수 없습니다."),
+        _ => ("❗", "오류가 발생했습니다."),
+    };
+
+    // 포맷된 에러 메시지 생성
+    let formatted = serde_json::json!({
+        "type": "error",
+        "error": {
+            "type": error_type,
+            "message": format!(
+                "{} SwiftCast Error\n\n{}\n\n━━━━━━━━━━━━━━━━━━━━\n📍 Status: {} | Account: {}\n💬 {}\n━━━━━━━━━━━━━━━━━━━━",
+                emoji,
+                description,
+                status_code,
+                account_name,
+                if error_message.len() > 200 {
+                    format!("{}...", &error_message[..200])
+                } else {
+                    error_message
+                }
+            )
+        }
+    });
+
+    bytes::Bytes::from(serde_json::to_vec(&formatted).unwrap_or_else(|_| error_body.to_vec()))
+}
+
 // Non-Anthropic 백엔드를 위해 thinking 관련 파라미터 제거
 fn strip_thinking_params(body: &[u8]) -> bytes::Bytes {
     if let Ok(mut json) = serde_json::from_slice::<serde_json::Value>(body) {
@@ -778,10 +836,9 @@ async fn proxy_handler(
     }
 
     // 요청 전송
-    let response = request_builder
-        .send()
-        .await
-        .map_err(|e| {
+    let response = match request_builder.send().await {
+        Ok(resp) => resp,
+        Err(e) => {
             tracing::error!(
                 "PROXY REQUEST FAILED: {} | Target: {} | Account: {} | Session: {:?} | Error: {}",
                 method.as_str(),
@@ -790,8 +847,28 @@ async fn proxy_handler(
                 session_id,
                 e
             );
-            StatusCode::BAD_GATEWAY
-        })?;
+
+            // 연결 실패 에러 포맷팅
+            let error_json = serde_json::json!({
+                "type": "error",
+                "error": {
+                    "type": "connection_error",
+                    "message": e.to_string()
+                }
+            });
+            let formatted_error = format_error_response(
+                502,
+                serde_json::to_vec(&error_json).unwrap_or_default().as_slice(),
+                &account.name,
+                &target_url,
+            );
+
+            let builder = Response::builder()
+                .status(StatusCode::BAD_GATEWAY)
+                .header("content-type", "application/json");
+            return Ok(builder.body(Body::from(formatted_error)).unwrap());
+        }
+    };
 
     let response_status = response.status();
 
@@ -815,10 +892,16 @@ async fn proxy_handler(
             }
         );
 
-        // 에러 응답 직접 반환
+        // 포맷된 에러 응답 반환
+        let formatted_error = format_error_response(
+            response_status.as_u16(),
+            &error_body,
+            &account.name,
+            &target_url,
+        );
         let mut builder = Response::builder().status(response_status.as_u16());
         builder = builder.header("content-type", "application/json");
-        return Ok(builder.body(Body::from(error_body)).unwrap());
+        return Ok(builder.body(Body::from(formatted_error)).unwrap());
     }
 
     tracing::info!("PROXY RESPONSE: {}", response_status);

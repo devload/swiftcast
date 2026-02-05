@@ -69,9 +69,15 @@ async fn main() {
 
     let proxy = Arc::new(RwLock::new(None));
 
+    // Dev 모드 확인
+    let is_dev = storage::Database::is_dev_mode();
+    if is_dev {
+        tracing::warn!("🔧 Running in DEV MODE (port: {}, db: data-dev.db)", storage::Database::default_port());
+    }
+
     // 자동 시작 설정 확인 및 프록시 시작
     let auto_start = db.get_auto_start().await.unwrap_or(true);
-    let port = db.get_proxy_port().await.unwrap_or(32080);
+    let port = db.get_proxy_port().await.unwrap_or_else(|_| storage::Database::default_port());
 
     if auto_start {
         let mut server = ProxyServer::new(db.clone());

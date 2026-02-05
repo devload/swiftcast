@@ -15,12 +15,24 @@ pub struct Database {
 }
 
 impl Database {
+    /// Check if running in dev mode
+    pub fn is_dev_mode() -> bool {
+        std::env::var("SWIFTCAST_DEV").is_ok()
+    }
+
+    /// Get default port based on mode
+    pub fn default_port() -> u16 {
+        if Self::is_dev_mode() { 32081 } else { 32080 }
+    }
+
     pub async fn init() -> Result<Self> {
         // 데이터베이스 파일 경로
         let app_data_dir = Self::get_app_data_dir()?;
         std::fs::create_dir_all(&app_data_dir)?;
 
-        let db_path = app_data_dir.join("data.db");
+        // Dev 모드일 때 다른 DB 사용
+        let db_name = if Self::is_dev_mode() { "data-dev.db" } else { "data.db" };
+        let db_path = app_data_dir.join(db_name);
         // Use absolute path with sqlite: prefix
         let db_url = format!("sqlite:{}", db_path.to_str().unwrap());
 
@@ -392,8 +404,9 @@ impl Database {
 
     // 프록시 포트 조회
     pub async fn get_proxy_port(&self) -> Result<u16> {
-        let port_str = self.get_config("proxy_port").await?.unwrap_or_else(|| "32080".to_string());
-        Ok(port_str.parse().unwrap_or(32080))
+        let default = Self::default_port();
+        let port_str = self.get_config("proxy_port").await?.unwrap_or_else(|| default.to_string());
+        Ok(port_str.parse().unwrap_or(default))
     }
 
     // 자동 시작 설정 조회
